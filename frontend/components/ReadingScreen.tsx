@@ -6,6 +6,7 @@ import { ReadingPane } from "./ReadingPane";
 import { ReturnBanner } from "./ReturnBanner";
 import { ControlBar } from "./ControlBar";
 import { PassageLoader } from "./PassageLoader";
+import { BreathBanner } from "./BreathBanner";
 
 export function ReadingScreen() {
   const state = useReadingState();
@@ -36,14 +37,19 @@ export function ReadingScreen() {
         totalMs={state.returnModeMs}
       />
 
-      <ReadingPane
-        syllables={state.syllables}
-        currentIndex={state.currentIndex}
-        isParagraphPause={state.isParagraphPause}
-        returnMode={state.returnMode}
-        onWordClick={state.handleWordClick}
-        onSpace={state.advance}
-      />
+      <div className="reading-pane-wrap">
+        <ReadingPane
+          syllables={state.syllables}
+          currentIndex={state.currentIndex}
+          isParagraphPause={state.isParagraphPause}
+          isSentencePause={state.isSentencePause}
+          pendingSentence={state.pendingSentence}
+          returnMode={state.returnMode}
+          onWordClick={state.handleWordClick}
+          onSpace={state.advance}
+        />
+        <BreathBanner active={state.isBreathError} />
+      </div>
 
       <div className="passage-loader-wrap">
         <PassageLoader

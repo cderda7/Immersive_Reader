@@ -18,7 +18,7 @@ export function PassageLoader({ onLoad, isLoading, loadError }: PassageLoaderPro
 
   return (
     <details className="passage-loader">
-      <summary>Test live syllabification on your own text</summary>
+      <summary>Test live on your own text</summary>
       <textarea
         value={draft}
         onChange={(e) => setDraft(e.target.value)}

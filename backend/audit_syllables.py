@@ -21,7 +21,7 @@ from collections import defaultdict
 
 from syllabify import syllabify
 
-FLAG_MIN_LENGTH = 5
+FLAG_MIN_LENGTH = 4
 
 
 def find_suspect_words(passage: str) -> list[str]:

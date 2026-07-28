@@ -82,10 +82,38 @@ body {
 .swatch--word { background: var(--tier-word); }
 .swatch--syllable { background: var(--tier-syllable); }
 
+.reading-pane-wrap {
+  /* Positioning context for .breath-overlay below, which covers exactly
+     the passage area (not the whole app-frame) with the calming
+     interruption. */
+  position: relative;
+}
 .reading-pane {
   padding: 40px 56px;
   min-height: 260px;
   outline: none;
+}
+.breath-overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  border-radius: 6px;
+  text-align: center;
+  font-size: 20px;
+  font-weight: 600;
+  color: #fff;
+  background: #3a5a40;
+  opacity: 0;
+  pointer-events: none;
+}
+.breath-overlay--active {
+  /* Fully opaque, not just near-opaque -- while this is up the passage
+     text underneath should be completely hidden, not visible-through. */
+  opacity: 1;
 }
 .reading-paragraph {
   margin: 0 0 28px 0;
@@ -107,6 +135,16 @@ body {
   border-radius: 4px;
   margin-right: 6px;
   cursor: default;
+  /* Sentence-level focus tier: no background color of its own (that would
+     be a 4th blue shade competing with the syllable/word/paragraph tiers
+     already locked in) -- just opacity. Opacity AND transition duration
+     are set inline per-word by ReadingPane.tsx (getWordFocus), not here --
+     the duration has to vary (ambient fluid fade during normal reading vs.
+     synced-to-the-pause fade at a sentence boundary, see
+     SENTENCE_PAUSE_MS in useReadingState.ts), which a single static CSS
+     rule can't express. This class just carries the non-animated base
+     layout styles.
+  */
 }
 .reading-word--current {
   background: var(--tier-word);

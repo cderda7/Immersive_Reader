@@ -4,10 +4,19 @@ Splits a passage into paragraphs -> words -> syllables using Pyphen
 (written syllable breaks, e.g. "im-mer-sive", not phonetic breaks).
 
 Output is a FLAT list of syllable dicts, each tagged with
-(paragraph_idx, word_idx, syllable_idx) index tuples. This is the shape
-the frontend consumes: advancing on spacebar is just `index + 1` into
-this flat list, and the three highlight tiers (paragraph/word/syllable)
-are derived by comparing indices, with no tree-walking required.
+(paragraph_idx, sentence_idx, word_idx, syllable_idx) index tuples. This
+is the shape the frontend consumes: advancing on spacebar is just
+`index + 1` into this flat list, and each highlight tier (paragraph/
+sentence/word/syllable) is derived by comparing indices, with no
+tree-walking required. sentence_idx is paragraph-relative (resets to 0
+each paragraph), same convention as word_idx.
+
+SENTENCE SPLITTING is a plain punctuation heuristic (see
+_SENTENCE_SPLIT_RE below), not real sentence-boundary detection --
+abbreviations like "Dr. Smith" or "e.g. this" will incorrectly split into
+two "sentences". Same trade-off as the syllable overrides below: fine for
+hand-picked, spot-checked demo passages; a real risk against arbitrary
+teacher-pasted text.
 
 KNOWN LIMITATION: Pyphen's en_US dictionary is built from TeX/LibreOffice
 line-breaking patterns, not pronunciation data -- it finds typographically
@@ -86,6 +95,7 @@ SYLLABLE_OVERRIDES: dict[str, list[str]] = {
     "forces": ["forc", "es"],
     "heavy": ["heav", "y"],
     "idea": ["i", "de", "a"],
+    "lazy": ["la", "zy"],
     "longer": ["long", "er"],
     "many": ["man", "y"],
     "maybe": ["may", "be"],
@@ -116,15 +126,27 @@ SYLLABLE_OVERRIDES: dict[str, list[str]] = {
 # syllable it's attached to instead of getting syllabified itself.
 _WORD_RE = re.compile(r"^(\W*)([\w'-]*)(\W*)$", re.UNICODE)
 
+# Sentence boundary: ./!/? followed by whitespace. See docstring above for
+# the abbreviation caveat.
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
 
 @dataclass
 class Syllable:
     text: str
     paragraph_idx: int
+    sentence_idx: int
     word_idx: int
     syllable_idx: int
     is_first_in_word: bool
     is_last_in_word: bool
+
+
+def _split_sentences(paragraph: str) -> list[str]:
+    """Split a paragraph into sentences. See module docstring for the
+    abbreviation-splitting limitation."""
+    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(paragraph.strip()) if s.strip()]
+    return sentences or [paragraph.strip()]
 
 
 def _apply_casing(template: str, override_part: str, is_first: bool) -> str:
@@ -159,34 +181,40 @@ def _syllabify_word(word: str) -> list[str]:
 def syllabify(passage: str) -> list[dict]:
     """Turn raw passage text into the flat syllable list described above.
 
-    Paragraphs are split on blank lines; words are split on whitespace.
+    Paragraphs are split on blank lines; each paragraph is split into
+    sentences; words within a sentence are split on whitespace. word_idx
+    keeps counting across sentence boundaries (paragraph-relative, as
+    before) -- only sentence_idx resets per paragraph.
     """
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", passage.strip()) if p.strip()]
 
     flat: list[Syllable] = []
     for p_idx, paragraph in enumerate(paragraphs):
-        words = paragraph.split()
-        for w_idx, token in enumerate(words):
-            match = _WORD_RE.match(token)
-            lead, core, trail = match.groups() if match else ("", token, "")
-            syl_parts = _syllabify_word(core) if core else [token]
+        w_idx = 0
+        for sent_idx, sentence in enumerate(_split_sentences(paragraph)):
+            for token in sentence.split():
+                match = _WORD_RE.match(token)
+                lead, core, trail = match.groups() if match else ("", token, "")
+                syl_parts = _syllabify_word(core) if core else [token]
 
-            # Reattach punctuation to the first/last syllable of the word.
-            if lead:
-                syl_parts[0] = lead + syl_parts[0]
-            if trail:
-                syl_parts[-1] = syl_parts[-1] + trail
+                # Reattach punctuation to the first/last syllable of the word.
+                if lead:
+                    syl_parts[0] = lead + syl_parts[0]
+                if trail:
+                    syl_parts[-1] = syl_parts[-1] + trail
 
-            for s_idx, text in enumerate(syl_parts):
-                flat.append(
-                    Syllable(
-                        text=text,
-                        paragraph_idx=p_idx,
-                        word_idx=w_idx,
-                        syllable_idx=s_idx,
-                        is_first_in_word=(s_idx == 0),
-                        is_last_in_word=(s_idx == len(syl_parts) - 1),
+                for s_idx, text in enumerate(syl_parts):
+                    flat.append(
+                        Syllable(
+                            text=text,
+                            paragraph_idx=p_idx,
+                            sentence_idx=sent_idx,
+                            word_idx=w_idx,
+                            syllable_idx=s_idx,
+                            is_first_in_word=(s_idx == 0),
+                            is_last_in_word=(s_idx == len(syl_parts) - 1),
+                        )
                     )
-                )
+                w_idx += 1
 
     return [asdict(s) for s in flat]

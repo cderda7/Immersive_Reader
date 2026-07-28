@@ -1,11 +1,14 @@
-// Flat syllable list, each tagged with (paragraph_idx, word_idx, syllable_idx).
-// This is the shape the backend's /api/syllabify route returns, and the
-// shape any static/precomputed passage data should match. Advancing the
-// reading position is `currentIndex + 1` into this flat array -- no
-// tree-walking needed to figure out what's "next".
+// Flat syllable list, each tagged with
+// (paragraph_idx, sentence_idx, word_idx, syllable_idx). This is the shape
+// the backend's /api/syllabify route returns, and the shape any
+// static/precomputed passage data should match. Advancing the reading
+// position is `currentIndex + 1` into this flat array -- no tree-walking
+// needed to figure out what's "next". sentence_idx is paragraph-relative
+// (resets each paragraph), same convention as word_idx.
 export interface Syllable {
   text: string;
   paragraph_idx: number;
+  sentence_idx: number;
   word_idx: number;
   syllable_idx: number;
   is_first_in_word: boolean;
