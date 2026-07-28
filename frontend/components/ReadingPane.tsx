@@ -6,6 +6,7 @@ import { groupSyllables, type Syllable } from "@/lib/types";
 interface ReadingPaneProps {
   syllables: Syllable[];
   currentIndex: number;
+  isParagraphPause: boolean;
   returnMode: boolean;
   onWordClick: (paragraphIdx: number, wordIdx: number) => void;
   onSpace: () => void;
@@ -14,6 +15,7 @@ interface ReadingPaneProps {
 export function ReadingPane({
   syllables,
   currentIndex,
+  isParagraphPause,
   returnMode,
   onWordClick,
   onSpace,
@@ -47,7 +49,13 @@ export function ReadingPane({
       }}
     >
       {grouped.map((words, paragraphIdx) => {
-        const isCurrentParagraph = current?.paragraph_idx === paragraphIdx;
+        // While isParagraphPause is true, currentIndex is still anchored on
+        // the finishing paragraph's last syllable (so word/syllable
+        // highlight holds steady), but no paragraph is marked "current" --
+        // that's what lets .reading-paragraph--current's CSS transition
+        // fade the old highlight out during the pause, ahead of the new
+        // paragraph fading in once the pause resolves.
+        const isCurrentParagraph = current?.paragraph_idx === paragraphIdx && !isParagraphPause;
         return (
           <p
             key={paragraphIdx}

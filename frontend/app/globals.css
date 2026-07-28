@@ -91,7 +91,12 @@ body {
   margin: 0 0 28px 0;
   padding: 6px 10px;
   border-radius: 6px;
-  transition: background-color 0.15s ease;
+  /* Slower, more deliberate than the word/syllable tiers on purpose --
+     this is the fade that plays during the paragraph-to-paragraph pause
+     (see PARAGRAPH_PAUSE_MS in lib/useReadingState.ts). Word/syllable
+     highlight below stays instant so per-syllable pacing still feels
+     snappy; only the paragraph tier gets the "breath" treatment. */
+  transition: background-color 0.45s ease-in-out;
 }
 .reading-paragraph--current {
   background: var(--tier-paragraph);

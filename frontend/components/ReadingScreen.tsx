@@ -39,6 +39,7 @@ export function ReadingScreen() {
       <ReadingPane
         syllables={state.syllables}
         currentIndex={state.currentIndex}
+        isParagraphPause={state.isParagraphPause}
         returnMode={state.returnMode}
         onWordClick={state.handleWordClick}
         onSpace={state.advance}
@@ -65,8 +66,14 @@ export function ReadingScreen() {
         }
       />
 
-      <p className="hint">
-        Click the passage, then press <kbd>Space</kbd> to advance one syllable at a time.
+      <p className="hint" aria-live="polite">
+        {state.isParagraphPause ? (
+          "Pausing before the next paragraph…"
+        ) : (
+          <>
+            Click the passage, then press <kbd>Space</kbd> to advance one syllable at a time.
+          </>
+        )}
       </p>
     </div>
   );
