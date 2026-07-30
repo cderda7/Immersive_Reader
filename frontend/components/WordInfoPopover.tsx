@@ -11,6 +11,7 @@ interface WordInfoPopoverProps {
   isLoading: boolean;
   error: string | null;
   onClose: () => void;
+  onAdvance: () => void;
   onReplayAudio: () => void;
 }
 
@@ -39,16 +40,24 @@ export function WordInfoPopover({
   isLoading,
   error,
   onClose,
+  onAdvance,
   onReplayAudio,
 }: WordInfoPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<{ top: number; left: number } | null>(null);
 
-  // Re-measure and reposition whenever the tapped word or the visible
-  // stage changes -- content height varies by stage (a definition is
-  // taller than "hear it aloud"), so the box has to stay flush above the
-  // sentence rather than anchored at a fixed height. useLayoutEffect (not
-  // useEffect) so this resolves before paint -- no visible jump.
+  // Re-measure and reposition whenever the tapped word, the visible
+  // stage, OR the content itself changes -- content height varies by
+  // stage (a definition is taller than "hear it aloud") AND by loading
+  // state (the "Looking it up..." placeholder is much shorter than the
+  // real content that replaces it). wordInfo/isLoading/error all have to
+  // be dependencies here, not just activeWord/stage -- without them, the
+  // box measures itself once against the SHORT loading placeholder, locks
+  // in a position based on that height, and then the real (taller)
+  // content arrives without ever re-measuring, so it grows downward into
+  // the sentence instead of the box shifting up to compensate.
+  // useLayoutEffect (not useEffect) so this resolves before paint -- no
+  // visible jump.
   useLayoutEffect(() => {
     const popoverEl = popoverRef.current;
     const wordEl = queryWord(activeWord.paragraphIdx, activeWord.wordIdx);
@@ -76,7 +85,7 @@ export function WordInfoPopover({
     left = Math.min(Math.max(left, VIEWPORT_PADDING), Math.max(maxLeft, VIEWPORT_PADDING));
 
     setStyle({ top, left });
-  }, [activeWord, stage]);
+  }, [activeWord, stage, wordInfo, isLoading, error]);
 
   // Close on outside click/touch (anything that's not the popover itself
   // or the tapped word's own span -- re-tapping the same word is handled
@@ -113,11 +122,17 @@ export function WordInfoPopover({
       className="word-info-popover"
       role="dialog"
       aria-label={`Word info: ${activeWord.word}`}
+      // Clicking the box itself advances the stage, same as tapping the
+      // word -- the "Hear it again" button below stops this from firing
+      // on top of its own click (see its onClick), so replaying audio
+      // doesn't also skip a stage.
+      onClick={onAdvance}
       style={{
         position: "fixed",
         top: style?.top ?? 0,
         left: style?.left ?? 0,
         visibility: style ? "visible" : "hidden",
+        cursor: "pointer",
       }}
     >
       <div className="word-info-popover__header">{cleanHeaderWord(wordInfo, activeWord.word)}</div>
@@ -152,28 +167,48 @@ function StageContent({
     case "pronunciation":
       return (
         <>
-          {wordInfo.ipa && <span className="word-info-popover__ipa">{wordInfo.ipa}</span>}
-          {wordInfo.respelling && <span className="word-info-popover__respelling">{wordInfo.respelling}</span>}
+          {wordInfo.ipa && <div className="word-info-popover__ipa">{formatIpa(wordInfo.ipa)}</div>}
+          {wordInfo.respelling && <div className="word-info-popover__respelling">{wordInfo.respelling}</div>}
         </>
       );
     case "definition":
-      return <span>{wordInfo.definition}</span>;
+      return <div>{wordInfo.definition}</div>;
     case "morphology":
       return wordInfo.morphology ? (
         <>
-          <span className="word-info-popover__morphology-parts">{wordInfo.morphology.parts.join(" + ")}</span>
-          <span className="word-info-popover__muted">{wordInfo.morphology.note}</span>
+          <div className="word-info-popover__morphology-parts">{wordInfo.morphology.parts.join(" + ")}</div>
+          <div className="word-info-popover__muted">{wordInfo.morphology.note}</div>
         </>
       ) : null;
     case "hearAloud":
       return (
-        <button type="button" className="word-info-popover__replay-btn" onClick={onReplayAudio}>
+        <button
+          type="button"
+          className="word-info-popover__replay-btn"
+          onClick={(e) => {
+            // Stop this from also bubbling up to the box's own
+            // onClick={onAdvance} -- replaying audio shouldn't ALSO
+            // skip ahead to the next stage.
+            e.stopPropagation();
+            onReplayAudio();
+          }}
+        >
           🔊 Hear it again
         </button>
       );
     case "example":
-      return <span className="word-info-popover__example">{wordInfo.example_sentence}</span>;
+      return <div className="word-info-popover__example">{wordInfo.example_sentence}</div>;
     default:
       return null;
   }
+}
+
+// dictionaryapi.dev's phonetic strings already come wrapped in slashes
+// (e.g. "/dʒʌmp/"); Claude's fallback-generated ones (see word_info.py's
+// generate_word_bundle) don't reliably include them. Normalizing here so
+// the two sources render identically regardless of which one supplied
+// this particular word's IPA.
+function formatIpa(ipa: string): string {
+  const trimmed = ipa.trim();
+  return trimmed.startsWith("/") && trimmed.endsWith("/") ? trimmed : `/${trimmed}/`;
 }

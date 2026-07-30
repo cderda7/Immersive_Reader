@@ -62,6 +62,7 @@ export function ReadingScreen() {
             isLoading={tapWord.isLoading}
             error={tapWord.error}
             onClose={tapWord.closeWord}
+            onAdvance={tapWord.advanceStage}
             onReplayAudio={tapWord.replayAudio}
           />
         )}

@@ -10,6 +10,7 @@ export interface ActiveWord {
   wordIdx: number;
   sentenceIdx: number;
   word: string; // raw as-clicked text, e.g. "hallucinate." with trailing punctuation
+  sentenceText: string; // stashed so advanceStage/retry don't need it re-passed by the caller
 }
 
 // Strip surrounding punctuation and lowercase, e.g. '"Hallucinate,' ->
@@ -111,33 +112,51 @@ export function useTapWord() {
       });
   }, []);
 
+  // Shared by tapWord (tapping the word again) and advanceStage (clicking
+  // the box itself) -- both mean the same thing once a word is already
+  // active: move to the next stage, or retry if the last fetch failed.
+  const advanceOrRetry = useCallback(
+    (rawWordText: string, sentenceText: string) => {
+      // A prior fetch for this word failed -- advancing should retry
+      // rather than silently no-op (stages would still just be
+      // ["pronunciation"] with nothing to advance into).
+      if (!wordInfo && !isLoading && error) {
+        fetchWordInfo(cleanWordText(rawWordText), sentenceText);
+        return;
+      }
+      setStageIndex((i) => {
+        const next = Math.min(i + 1, stages.length - 1);
+        if (stages[next] === "hearAloud" && next !== i) speak(wordInfo?.word ?? rawWordText);
+        return next;
+      });
+    },
+    [wordInfo, isLoading, error, stages, fetchWordInfo]
+  );
+
   const tapWord = useCallback(
     (paragraphIdx: number, wordIdx: number, sentenceIdx: number, rawWordText: string, sentenceText: string) => {
       const isSameWord =
         activeWord !== null && activeWord.paragraphIdx === paragraphIdx && activeWord.wordIdx === wordIdx;
 
       if (isSameWord) {
-        // A prior fetch for this word failed -- tapping again should
-        // retry rather than silently no-op (stages would still just be
-        // ["pronunciation"] with nothing to advance into).
-        if (!wordInfo && !isLoading && error) {
-          fetchWordInfo(cleanWordText(rawWordText), sentenceText);
-          return;
-        }
-        setStageIndex((i) => {
-          const next = Math.min(i + 1, stages.length - 1);
-          if (stages[next] === "hearAloud" && next !== i) speak(wordInfo?.word ?? rawWordText);
-          return next;
-        });
+        advanceOrRetry(rawWordText, sentenceText);
         return;
       }
 
-      setActiveWord({ paragraphIdx, wordIdx, sentenceIdx, word: rawWordText });
+      setActiveWord({ paragraphIdx, wordIdx, sentenceIdx, word: rawWordText, sentenceText });
       setStageIndex(0);
       fetchWordInfo(cleanWordText(rawWordText), sentenceText);
     },
-    [activeWord, stages, wordInfo, isLoading, error, fetchWordInfo]
+    [activeWord, advanceOrRetry, fetchWordInfo]
   );
+
+  // Clicking the box itself (WordInfoPopover's onAdvance) -- same
+  // advance-or-retry behavior as tapping the word again, just sourced
+  // from the already-active word instead of a fresh click's params.
+  const advanceStage = useCallback(() => {
+    if (!activeWord) return;
+    advanceOrRetry(activeWord.word, activeWord.sentenceText);
+  }, [activeWord, advanceOrRetry]);
 
   const closeWord = useCallback(() => {
     setActiveWord(null);
@@ -157,6 +176,7 @@ export function useTapWord() {
     isLoading,
     error,
     tapWord,
+    advanceStage,
     closeWord,
     replayAudio,
   };

@@ -62,12 +62,33 @@ def clean_word(token: str) -> str:
     return _STRIP_RE.sub("", token).lower()
 
 
-def fetch_dictionary_entry(word: str) -> dict | None:
-    """Look up `word` against the free dictionaryapi.dev API. Returns
-    {"ipa": str | None, "definition": str | None} on success, or None on
-    a 404 (word not found) or any network/parse failure -- callers fall
-    back to asking Claude for a best-effort version instead of failing
-    the whole request over one missing dictionary entry."""
+def _stem_candidates(word: str) -> list[str]:
+    """Naive English stemming for a handful of common inflections --
+    NOT a real lemmatizer, just enough to catch the cases that actually
+    show up constantly in reading passages: plurals and simple verb
+    conjugations. e.g. "jumps" -> "jump", "flies" -> "fly", "hiking" ->
+    "hike". Ordered most-specific-suffix-first so "flies" tries "fly"
+    before the more generic "-s" stripping would mangle it into "flie"."""
+    candidates = []
+    if word.endswith("ies") and len(word) > 4:
+        candidates.append(word[:-3] + "y")
+    if word.endswith("es") and len(word) > 3:
+        candidates.append(word[:-2])
+    if word.endswith("s") and not word.endswith("ss") and len(word) > 3:
+        candidates.append(word[:-1])
+    if word.endswith("ing") and len(word) > 5:
+        candidates.append(word[:-3])
+        candidates.append(word[:-3] + "e")  # "hiking" -> "hike"
+    if word.endswith("ed") and len(word) > 4:
+        candidates.append(word[:-1])  # "hiked" -> "hike"
+        candidates.append(word[:-2])  # "jumped" -> "jump"
+    return candidates
+
+
+def _fetch_dictionary_entry_exact(word: str) -> dict | None:
+    """One lookup against dictionaryapi.dev for the exact string given --
+    no stemming. Returns {"ipa": str | None, "definition": str | None} on
+    success, or None on a 404/network/parse failure."""
     try:
         resp = httpx.get(DICTIONARY_API_URL.format(word=word), timeout=5.0)
         if resp.status_code != 200:
@@ -103,6 +124,28 @@ def fetch_dictionary_entry(word: str) -> dict | None:
     if ipa is None and definition is None:
         return None
     return {"ipa": ipa, "definition": definition}
+
+
+def fetch_dictionary_entry(word: str) -> dict | None:
+    """Look up `word` against dictionaryapi.dev, the way callers actually
+    want it to behave: try the word exactly as given first, and if that
+    comes back empty, try a few naive stemmed variants before giving up.
+    dictionaryapi.dev frequently only has an entry for the BASE form of a
+    word, not the inflected form that actually shows up in a passage --
+    e.g. "jump" has an entry, "jumps" often doesn't -- so without this,
+    perfectly ordinary conjugated/plural words would silently fall
+    through to Claude's own best-effort guess instead of real dictionary
+    data, defeating the point of using a dictionary at all. Returns None
+    only if nothing -- exact or stemmed -- was found, at which point
+    get_word_info's Claude fallback is the honest last resort."""
+    entry = _fetch_dictionary_entry_exact(word)
+    if entry is not None:
+        return entry
+    for candidate in _stem_candidates(word):
+        entry = _fetch_dictionary_entry_exact(candidate)
+        if entry is not None:
+            return entry
+    return None
 
 
 _BUNDLE_TOOL = {
