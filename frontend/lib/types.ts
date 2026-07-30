@@ -29,15 +29,24 @@ export function groupSyllables(syllables: Syllable[]): GroupedPassage {
   return paragraphs;
 }
 
-// Shape returned by POST /api/word-info (see backend/word_info.py). Field
-// names intentionally match the backend's JSON as-is (snake_case for
-// example_sentence) rather than getting camelCased on the way in, same
-// convention Syllable above already uses for paragraph_idx etc.
+// Prefix/suffix breakdown for the tap-word card's morphology stage, e.g.
+// {parts: ["pre", "view"], note: "pre- (before) + view"} for "preview".
+// null (not this shape) means the backend judged a breakdown not useful
+// for this word -- see word_info.py's analyze_morphology.
 export interface WordMorphology {
   parts: string[];
   note: string;
 }
 
+// Shape returned by POST /api/word-info, and what /api/word-example's
+// response gets merged into (see useTapWord.ts's fetchWordInfo). ipa,
+// respelling, definition, and morphology arrive fast (dictionary + rules,
+// no LLM call) -- example_sentence starts as "" and is patched in
+// slightly later once the background Claude call resolves, since it's
+// the one field that's genuinely generative and can't be produced by
+// rules. A "" example_sentence while on the example stage means "still
+// writing one", not "this word has no example" -- see
+// WordInfoPopover.tsx's StageContent.
 export interface WordInfo {
   word: string;
   ipa: string;

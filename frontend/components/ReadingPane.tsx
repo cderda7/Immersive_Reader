@@ -47,15 +47,18 @@ function getSentenceText(words: Syllable[][], sentenceIdx: number): string {
     .join(" ");
 }
 
-// How much opacity + transition speed a given word should have right now.
-// During an ordinary sentence-pause fade, sentence1 (the one you're
-// leaving) fades DOWN toward gray and sentence2 (pendingSentence, the one
-// you're headed into) fades UP toward full focus, both timed to
-// SENTENCE_PAUSE_MS -- so the fade completing is a true signal the pause
-// window has elapsed, not a decorative animation with its own timing.
-// Outside a sentence-pause, it's the simpler steady-state rule: current
-// sentence full, everything else in the active paragraph dimmed, at the
-// slower ambient speed.
+// Text color (never opacity -- see globals.css's note by .reading-word)
+// + transition speed a given word should have right now. During an
+// ordinary sentence-pause fade, sentence1 (the one you're leaving) fades
+// toward grey and sentence2 (pendingSentence, the one you're headed
+// into) fades toward black, both timed to SENTENCE_PAUSE_MS -- so the
+// fade completing is a true signal the pause window has elapsed, not a
+// decorative animation with its own timing. Outside a sentence-pause,
+// it's the simpler steady-state rule: current sentence black, everything
+// else in the active paragraph grey, at the slower ambient speed.
+const COLOR_CURRENT = "var(--ink)";
+const COLOR_DIMMED = "var(--muted)";
+
 function getWordFocus(args: {
   isActiveParagraph: boolean;
   paragraphIdx: number;
@@ -63,29 +66,29 @@ function getWordFocus(args: {
   currentSentenceIdx: number | undefined;
   isSentencePause: boolean;
   pendingSentence: PendingSentence | null;
-}): { opacity: number; transitionMs: number } {
+}): { color: string; transitionMs: number } {
   const { isActiveParagraph, paragraphIdx, wordSentenceIdx, currentSentenceIdx, isSentencePause, pendingSentence } =
     args;
 
   if (!isActiveParagraph || wordSentenceIdx === undefined || currentSentenceIdx === undefined) {
-    return { opacity: 1, transitionMs: AMBIENT_FADE_MS };
+    return { color: COLOR_CURRENT, transitionMs: AMBIENT_FADE_MS };
   }
 
   const isCurrentSentence = wordSentenceIdx === currentSentenceIdx;
 
   if (isSentencePause) {
-    if (isCurrentSentence) return { opacity: 0.4, transitionMs: SENTENCE_PAUSE_MS }; // sentence1 -> gray
+    if (isCurrentSentence) return { color: COLOR_DIMMED, transitionMs: SENTENCE_PAUSE_MS }; // sentence1 -> grey
     const isPendingSentence =
       pendingSentence !== null &&
       paragraphIdx === pendingSentence.paragraphIdx &&
       wordSentenceIdx === pendingSentence.sentenceIdx;
-    if (isPendingSentence) return { opacity: 1, transitionMs: SENTENCE_PAUSE_MS }; // sentence2 -> full focus
-    return { opacity: 0.4, transitionMs: AMBIENT_FADE_MS }; // some other sentence, untouched by this pause
+    if (isPendingSentence) return { color: COLOR_CURRENT, transitionMs: SENTENCE_PAUSE_MS }; // sentence2 -> black
+    return { color: COLOR_DIMMED, transitionMs: AMBIENT_FADE_MS }; // some other sentence, untouched by this pause
   }
 
   return isCurrentSentence
-    ? { opacity: 1, transitionMs: AMBIENT_FADE_MS }
-    : { opacity: 0.4, transitionMs: AMBIENT_FADE_MS };
+    ? { color: COLOR_CURRENT, transitionMs: AMBIENT_FADE_MS }
+    : { color: COLOR_DIMMED, transitionMs: AMBIENT_FADE_MS };
 }
 
 export function ReadingPane({
@@ -108,6 +111,16 @@ export function ReadingPane({
   useEffect(() => {
     currentRef.current?.scrollIntoView({ block: "nearest" });
   }, [currentIndex]);
+
+  // Auto-focus the pane on mount so Space advances immediately after a
+  // page load/refresh. Without this, keyboard focus defaults to <body>,
+  // and the onKeyDown handler below (which only fires on this element)
+  // never sees the keypress -- Space is silently swallowed (or just
+  // scrolls the page) until the student clicks into the passage once.
+  // That first required click is what reads as a startup "lag."
+  useEffect(() => {
+    paneRef.current?.focus();
+  }, []);
 
   return (
     <div
@@ -154,7 +167,7 @@ export function ReadingPane({
               // All syllables in a word share one sentence_idx -- read it
               // off the first.
               const wordSentenceIdx = sylList[0]?.sentence_idx;
-              const { opacity, transitionMs } = getWordFocus({
+              const { color, transitionMs } = getWordFocus({
                 isActiveParagraph,
                 paragraphIdx,
                 wordSentenceIdx,
@@ -172,7 +185,7 @@ export function ReadingPane({
                   className={`reading-word${isCurrentWord ? " reading-word--current" : ""}${
                     returnMode ? " reading-word--clickable" : " reading-word--tappable"
                   }`}
-                  style={{ opacity, transition: `opacity ${transitionMs}ms ease-in-out` }}
+                  style={{ color, transition: `color ${transitionMs}ms ease-in-out` }}
                   onClick={() => {
                     if (returnMode) {
                       onWordClick(paragraphIdx, wordIdx);

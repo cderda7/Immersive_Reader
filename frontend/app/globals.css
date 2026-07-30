@@ -8,15 +8,19 @@
   --reading-letter-spacing: 0px;
   --reading-line-height: 1.6;
 
-  /* Highlight tiers vary by lightness on a single hue, not by hue --
-     safer for colorblind readers than a multi-hue scheme. */
-  --tier-syllable: #0b3d91;
-  --tier-word: #4f83cc;
-  --tier-paragraph: #dbe9fb;
+  /* Highlight tiers vary by lightness on a single warm peachy-beige hue,
+     not by hue -- safer for colorblind readers than a multi-hue scheme,
+     and calmer/warmer to look at than the original blue tiers. Text on
+     top of any of these three is always --ink or --muted -- never white
+     -- so highlighting never crosses into a "text on a dark badge" look;
+     it's tint, not inversion. */
+  --tier-syllable: #e5b995;
+  --tier-word: #efd5b1;
+  --tier-paragraph: #f9eede;
 
   --ink: #1b1f27;
   --paper: #fdfcf9;
-  --muted: #6b7280;
+  --muted: #7d6b5a;
   --control-bg: #f3f4f6;
   --control-border: #d1d5db;
 }
@@ -131,26 +135,24 @@ body {
 }
 .reading-word {
   display: inline-block;
-  padding: 1px 2px;
+  padding: 1px 6px;
   border-radius: 4px;
   margin-right: 6px;
   cursor: default;
-  /* Sentence-level focus tier: no background color of its own (that would
-     be a 4th blue shade competing with the syllable/word/paragraph tiers
-     already locked in) -- just opacity. Opacity AND transition duration
-     are set inline per-word by ReadingPane.tsx (getWordFocus), not here --
-     the duration has to vary (ambient fluid fade during normal reading vs.
-     synced-to-the-pause fade at a sentence boundary, see
-     SENTENCE_PAUSE_MS in useReadingState.ts), which a single static CSS
-     rule can't express. This class just carries the non-animated base
-     layout styles.
+  /* Sentence-level focus tier: no background of its own (that would be a
+     4th beige tint competing with the syllable/word/paragraph tiers
+     already locked in) -- text COLOR instead, black for the current
+     sentence and grey for others, never opacity-faded black pretending
+     to be grey. Color AND transition duration are set inline per-word by
+     ReadingPane.tsx (getWordFocus), not here -- the duration has to vary
+     (ambient fluid fade during normal reading vs. synced-to-the-pause
+     fade at a sentence boundary, see SENTENCE_PAUSE_MS in
+     useReadingState.ts), which a single static CSS rule can't express.
+     This class just carries the non-animated base layout styles.
   */
 }
 .reading-word--current {
   background: var(--tier-word);
-}
-.reading-word--current .reading-syllable {
-  color: #fff;
 }
 .reading-word--clickable {
   cursor: pointer;
@@ -168,7 +170,6 @@ body {
 }
 .reading-syllable--current {
   background: var(--tier-syllable);
-  color: #fff;
   border-radius: 3px;
   padding: 0 1px;
 }
@@ -229,7 +230,7 @@ body {
 .word-info-popover__replay-btn {
   align-self: flex-start;
   background: var(--tier-word);
-  color: #fff;
+  color: var(--ink);
   border: none;
   border-radius: 8px;
   padding: 6px 12px;
@@ -341,7 +342,7 @@ body {
   justify-content: center;
 }
 .ctrl-btn:hover {
-  background: #eef2ff;
+  background: var(--tier-paragraph);
   border-color: var(--tier-syllable);
 }
 .ctrl-value {
@@ -353,7 +354,11 @@ body {
 
 .return-btn {
   background: var(--tier-syllable);
-  color: #fff;
+  /* --tier-syllable is a light warm tint now, not the old dark blue --
+     white text on it would fail contrast. Same "never white" rule as
+     the reading highlights, just applied to this button since it shares
+     the variable. */
+  color: var(--ink);
   border: none;
   border-radius: 8px;
   padding: 0 16px;
