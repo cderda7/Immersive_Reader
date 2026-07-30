@@ -28,3 +28,21 @@ export function groupSyllables(syllables: Syllable[]): GroupedPassage {
   }
   return paragraphs;
 }
+
+// Shape returned by POST /api/word-info (see backend/word_info.py). Field
+// names intentionally match the backend's JSON as-is (snake_case for
+// example_sentence) rather than getting camelCased on the way in, same
+// convention Syllable above already uses for paragraph_idx etc.
+export interface WordMorphology {
+  parts: string[];
+  note: string;
+}
+
+export interface WordInfo {
+  word: string;
+  ipa: string;
+  respelling: string;
+  definition: string;
+  morphology: WordMorphology | null;
+  example_sentence: string;
+}

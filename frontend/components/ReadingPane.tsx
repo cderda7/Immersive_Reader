@@ -23,7 +23,28 @@ interface ReadingPaneProps {
   pendingSentence: PendingSentence | null;
   returnMode: boolean;
   onWordClick: (paragraphIdx: number, wordIdx: number) => void;
+  onWordTap: (
+    paragraphIdx: number,
+    wordIdx: number,
+    sentenceIdx: number,
+    wordText: string,
+    sentenceText: string
+  ) => void;
+  tapWordOpen: boolean;
   onSpace: () => void;
+}
+
+// Reconstructs a sentence's plain text from the (paragraph, sentence)-
+// grouped syllable data, for sending as context to /api/word-info.
+// Syllables within a word concatenate directly (breaks are typographic,
+// not word boundaries); words join with a single space. Punctuation
+// already rides along on the first/last syllable of its word (see
+// backend/syllabify.py), so this round-trips close to the original text.
+function getSentenceText(words: Syllable[][], sentenceIdx: number): string {
+  return words
+    .filter((sylList) => sylList[0]?.sentence_idx === sentenceIdx)
+    .map((sylList) => sylList.map((s) => s.text).join(""))
+    .join(" ");
 }
 
 // How much opacity + transition speed a given word should have right now.
@@ -75,6 +96,8 @@ export function ReadingPane({
   pendingSentence,
   returnMode,
   onWordClick,
+  onWordTap,
+  tapWordOpen,
   onSpace,
 }: ReadingPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
@@ -99,7 +122,7 @@ export function ReadingPane({
         lineHeight: "var(--reading-line-height)",
       }}
       onKeyDown={(e) => {
-        if (e.code === "Space" && !returnMode) {
+        if (e.code === "Space" && !returnMode && !tapWordOpen) {
           e.preventDefault();
           onSpace();
         }
@@ -143,11 +166,22 @@ export function ReadingPane({
               return (
                 <span
                   key={wordIdx}
+                  data-paragraph-idx={paragraphIdx}
+                  data-word-idx={wordIdx}
+                  data-sentence-idx={wordSentenceIdx}
                   className={`reading-word${isCurrentWord ? " reading-word--current" : ""}${
-                    returnMode ? " reading-word--clickable" : ""
+                    returnMode ? " reading-word--clickable" : " reading-word--tappable"
                   }`}
                   style={{ opacity, transition: `opacity ${transitionMs}ms ease-in-out` }}
-                  onClick={() => onWordClick(paragraphIdx, wordIdx)}
+                  onClick={() => {
+                    if (returnMode) {
+                      onWordClick(paragraphIdx, wordIdx);
+                    } else if (wordSentenceIdx !== undefined) {
+                      const wordText = sylList.map((s) => s.text).join("");
+                      const sentenceText = getSentenceText(words, wordSentenceIdx);
+                      onWordTap(paragraphIdx, wordIdx, wordSentenceIdx, wordText, sentenceText);
+                    }
+                  }}
                 >
                   {sylList.map((syl, syllableIdx) => {
                     const isCurrentSyllable = isCurrentWord && current?.syllable_idx === syllableIdx;
