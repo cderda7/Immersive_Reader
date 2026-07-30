@@ -1,3 +1,6 @@
 .venv/
 __pycache__/
 *.pyc
+
+# Holds ANTHROPIC_API_KEY -- see .env.example. Never commit this.
+.env
