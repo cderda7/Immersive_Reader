@@ -47,20 +47,26 @@ by comparing indices, no tree-walking needed. See
 
 ## Running locally
 
-Backend:
+One-time setup (backend + frontend each need this once):
 
 ```
-cd backend
-python3 -m venv .venv && source .venv/bin/activate   # if not already set up
-pip install -r requirements.txt
-uvicorn main:app --reload   # http://localhost:8000
+cd backend && python3 -m venv .venv && source .venv/bin/activate && pip install -r requirements.txt && cd ..
+cd frontend && npm install && cp .env.local.example .env.local && cd ..
 ```
 
-Frontend:
+Tap-to-define also needs an Anthropic key: `cp backend/.env.example backend/.env`, then fill in `ANTHROPIC_API_KEY`.
+
+Then, every time you want to run it, **one command from the repo root**:
 
 ```
-cd frontend
-npm install
-cp .env.local.example .env.local
-npm run dev   # http://localhost:3000
+./dev.sh
+```
+
+Starts both servers together (backend on :8000, frontend on :3000), prefixes each server's output (`[backend]` / `[frontend]`) so they're distinguishable in one terminal, and Ctrl+C stops both cleanly. This is the one that matters: running the two servers separately in two tabs is how one of them silently ends up not running while you're testing the other -- `./dev.sh` makes "is it actually up" obvious at a glance instead of a debugging session.
+
+Prefer separate terminals anyway (e.g. to restart just one side)? Still works:
+
+```
+cd backend && source .venv/bin/activate && uvicorn main:app --reload   # http://localhost:8000
+cd frontend && npm run dev                                             # http://localhost:3000
 ```
