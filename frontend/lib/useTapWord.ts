@@ -84,8 +84,14 @@ export function useTapWord() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ word: cleanWord, sentence }),
     })
-      .then((res) => {
-        if (!res.ok) throw new Error(`Backend returned ${res.status}`);
+      .then(async (res) => {
+        if (!res.ok) {
+          // The backend returns {"error": "..."} on failure (see
+          // main.py's word_info_route) -- surface that real message
+          // instead of just the status code when it's there.
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? `Backend returned ${res.status}`);
+        }
         return res.json();
       })
       .then((data: WordInfo) => {

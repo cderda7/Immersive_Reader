@@ -18,6 +18,7 @@ load_dotenv()
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from syllabify import syllabify
@@ -56,4 +57,18 @@ def syllabify_route(req: SyllabifyRequest):
 
 @app.post("/api/word-info")
 def word_info_route(req: WordInfoRequest):
-    return get_word_info(req.word, req.sentence)
+    try:
+        return get_word_info(req.word, req.sentence)
+    except Exception as exc:
+        # Deliberately caught here rather than left to propagate: an
+        # unhandled exception gets turned into a 500 by Starlette's
+        # ServerErrorMiddleware, which sits OUTSIDE the CORSMiddleware
+        # layer added above -- so that response comes back with no
+        # Access-Control-Allow-Origin header, the browser blocks it, and
+        # fetch() on the frontend sees an opaque "Failed to fetch"
+        # instead of the real error (most commonly Anthropic being
+        # unreachable -- APIConnectionError -- or ANTHROPIC_API_KEY being
+        # missing/invalid). Returning a normal response here instead
+        # keeps it inside CORSMiddleware's path, so the frontend gets a
+        # real status code and message to show.
+        return JSONResponse(status_code=502, content={"error": str(exc)})
