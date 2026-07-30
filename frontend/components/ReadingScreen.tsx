@@ -2,14 +2,17 @@
 
 import { useEffect } from "react";
 import { useReadingState } from "@/lib/useReadingState";
+import { useTapWord } from "@/lib/useTapWord";
 import { ReadingPane } from "./ReadingPane";
 import { ReturnBanner } from "./ReturnBanner";
 import { ControlBar } from "./ControlBar";
 import { PassageLoader } from "./PassageLoader";
 import { BreathBanner } from "./BreathBanner";
+import { WordInfoPopover } from "./WordInfoPopover";
 
 export function ReadingScreen() {
   const state = useReadingState();
+  const tapWord = useTapWord();
 
   // Drive the CSS variables the typography controls target, so the whole
   // layout scales from one source of truth instead of per-element styles.
@@ -46,9 +49,22 @@ export function ReadingScreen() {
           pendingSentence={state.pendingSentence}
           returnMode={state.returnMode}
           onWordClick={state.handleWordClick}
+          onWordTap={tapWord.tapWord}
+          tapWordOpen={tapWord.isOpen}
           onSpace={state.advance}
         />
         <BreathBanner active={state.isBreathError} />
+        {tapWord.activeWord && (
+          <WordInfoPopover
+            activeWord={tapWord.activeWord}
+            stage={tapWord.stage}
+            wordInfo={tapWord.wordInfo}
+            isLoading={tapWord.isLoading}
+            error={tapWord.error}
+            onClose={tapWord.closeWord}
+            onReplayAudio={tapWord.replayAudio}
+          />
+        )}
       </div>
 
       <div className="passage-loader-wrap">
@@ -67,9 +83,12 @@ export function ReadingScreen() {
         lineHeight={state.lineHeight}
         setLineHeight={state.setLineHeight}
         returnMode={state.returnMode}
-        onToggleReturnMode={() =>
-          state.returnMode ? state.exitReturnMode() : state.enterReturnMode()
-        }
+        onToggleReturnMode={() => {
+          // Return-to mode repurposes word clicks for jump-to-word --
+          // close any open tap-word card first so the two don't overlap.
+          tapWord.closeWord();
+          state.returnMode ? state.exitReturnMode() : state.enterReturnMode();
+        }}
       />
 
       <p className="hint" aria-live="polite">
@@ -78,6 +97,7 @@ export function ReadingScreen() {
         ) : (
           <>
             Click the passage, then press <kbd>Space</kbd> to advance one syllable at a time.
+            {!state.returnMode && " Tap any word to look it up."}
           </>
         )}
       </p>

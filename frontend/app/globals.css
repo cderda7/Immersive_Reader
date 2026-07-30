@@ -159,11 +159,86 @@ body {
   outline: 2px dashed var(--tier-syllable);
   outline-offset: 2px;
 }
+.reading-word--tappable {
+  cursor: pointer;
+}
+.reading-word--tappable:hover {
+  text-decoration: underline dotted var(--muted);
+  text-underline-offset: 3px;
+}
 .reading-syllable--current {
   background: var(--tier-syllable);
   color: #fff;
   border-radius: 3px;
   padding: 0 1px;
+}
+
+/* Tap-word card (WordInfoPopover.tsx). position: fixed is set inline
+   (viewport coordinates, computed from DOM rects) -- this just carries
+   the chrome. z-index above .breath-overlay (5) since both can only
+   plausibly be visible one at a time in practice, but the card should
+   win if they ever did overlap. */
+.word-info-popover {
+  z-index: 10;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  background: var(--paper);
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+  padding: 12px 14px;
+}
+.word-info-popover__header {
+  font-weight: 700;
+  font-size: 15px;
+  color: var(--ink);
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #e6e2d8;
+}
+.word-info-popover__body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 14px;
+  color: var(--ink);
+  min-height: 20px;
+}
+.word-info-popover__muted {
+  color: var(--muted);
+  font-size: 12px;
+}
+.word-info-popover__error {
+  color: #b3261e;
+  font-size: 13px;
+}
+.word-info-popover__ipa {
+  font-size: 15px;
+}
+.word-info-popover__respelling {
+  color: var(--muted);
+  font-size: 13px;
+}
+.word-info-popover__morphology-parts {
+  font-size: 15px;
+  letter-spacing: 0.02em;
+}
+.word-info-popover__example {
+  font-style: italic;
+}
+.word-info-popover__replay-btn {
+  align-self: flex-start;
+  background: var(--tier-word);
+  color: #fff;
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.word-info-popover__replay-btn:hover {
+  opacity: 0.9;
 }
 
 .return-banner {
