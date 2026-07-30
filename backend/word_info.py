@@ -16,6 +16,7 @@ grade-appropriate example sentence -- combined into a SINGLE call rather
 than three separate ones, to keep latency down.
 """
 
+import os
 import re
 
 import httpx
@@ -37,10 +38,21 @@ def _get_anthropic_client() -> Anthropic:
     doesn't require ANTHROPIC_API_KEY to already be set (e.g. at FastAPI
     startup, before main.py's load_dotenv() has necessarily run in every
     process-start order) -- only actually calling generate_word_bundle
-    does."""
+    does.
+
+    Explicitly strips the key rather than letting the SDK pick up
+    os.environ["ANTHROPIC_API_KEY"] on its own -- a stray trailing
+    newline in a .env file (easy to introduce depending on how the file
+    gets edited/pasted into) becomes part of the header value verbatim
+    otherwise, and httpx rejects it outright with
+    `LocalProtocolError: Illegal header value`, which the SDK then wraps
+    in a generic APIConnectionError that gives no hint it was ever a key
+    formatting problem rather than a real connectivity one.
+    """
     global _anthropic_client
     if _anthropic_client is None:
-        _anthropic_client = Anthropic()  # reads ANTHROPIC_API_KEY from env
+        api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
+        _anthropic_client = Anthropic(api_key=api_key)
     return _anthropic_client
 
 
