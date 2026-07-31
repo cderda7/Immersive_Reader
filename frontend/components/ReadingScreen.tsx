@@ -70,6 +70,7 @@ export function ReadingScreen() {
           onWordTap={tapWord.tapWord}
           tapWordOpen={tapWord.isOpen}
           onSpace={state.advance}
+          onRetreat={state.retreat}
         />
         <BreathBanner active={state.isBreathError} />
         {tapWord.activeWord && (
@@ -118,8 +119,8 @@ export function ReadingScreen() {
           "Pausing before the next paragraph…"
         ) : (
           <>
-            Click the passage, then press <kbd>Space</kbd> to advance one {ADVANCE_MODE_LABEL[state.advanceMode]} at
-            a time.
+            Click the passage, then press <kbd>Space</kbd> or <kbd>→</kbd> to advance, or{" "}
+            <kbd>←</kbd> to go back, one {ADVANCE_MODE_LABEL[state.advanceMode]} at a time.
             {!state.returnMode && " Tap any word to look it up."}
           </>
         )}

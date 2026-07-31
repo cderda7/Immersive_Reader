@@ -33,6 +33,7 @@ interface ReadingPaneProps {
   ) => void;
   tapWordOpen: boolean;
   onSpace: () => void;
+  onRetreat: () => void;
 }
 
 // Reconstructs a sentence's plain text from the (paragraph, sentence)-
@@ -202,6 +203,7 @@ export function ReadingPane({
   onWordTap,
   tapWordOpen,
   onSpace,
+  onRetreat,
 }: ReadingPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const currentRef = useRef<HTMLSpanElement>(null);
@@ -236,17 +238,27 @@ export function ReadingPane({
         lineHeight: "var(--reading-line-height)",
       }}
       onKeyDown={(e) => {
-        if (e.code === "Space") {
-          // Always prevent the browser's native "Space scrolls the page"
-          // behavior while the pane is focused, even when returnMode/
-          // tapWordOpen mean we're not actually going to advance. Only
-          // gating preventDefault() on those same conditions let Space
-          // fall through to a real page-down scroll during those states --
-          // invisible on a short passage with nothing to scroll, but very
-          // visible (and disorienting) on a tall book chapter.
+        // Space and ArrowRight both advance (same handler, same
+        // semantics -- ArrowRight is just an alternate binding for the
+        // same action). ArrowLeft retreats instead, via its own handler
+        // with none of advance()'s pause/breath-error behavior -- see
+        // retreat()'s comment in useReadingState.ts. All three always
+        // preventDefault() while the pane is focused, even when
+        // returnMode/tapWordOpen mean nothing will actually happen: only
+        // gating preventDefault() on those same conditions is exactly
+        // what let Space fall through to a real page-down scroll during
+        // those states -- invisible on a short passage with nothing to
+        // scroll, but very visible (and disorienting) on a tall book
+        // chapter. Same risk applies to the arrow keys, so the same rule.
+        if (e.code === "Space" || e.code === "ArrowRight") {
           e.preventDefault();
           if (!returnMode && !tapWordOpen) {
             onSpace();
+          }
+        } else if (e.code === "ArrowLeft") {
+          e.preventDefault();
+          if (!returnMode && !tapWordOpen) {
+            onRetreat();
           }
         }
       }}
