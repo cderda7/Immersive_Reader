@@ -1,3 +1,5 @@
+import type { AdvanceMode } from "@/lib/useReadingState";
+
 interface ControlBarProps {
   textSize: number;
   setTextSize: (v: number) => void;
@@ -7,11 +9,23 @@ interface ControlBarProps {
   setLineHeight: (v: number) => void;
   returnMode: boolean;
   onToggleReturnMode: () => void;
+  advanceMode: AdvanceMode;
+  setAdvanceMode: (m: AdvanceMode) => void;
 }
 
 const TEXT_SIZE_RANGE = [12, 40] as const;
 const LETTER_SPACING_RANGE = [0, 10] as const;
 const LINE_HEIGHT_RANGE = [1.0, 3.0] as const;
+
+// Coarsest to finest, matching useReadingState's AdvanceMode hierarchy
+// and ReadingPane's tiersFor() -- shown left-to-right in that order so
+// the segmented control itself reads as a little hierarchy diagram.
+const ADVANCE_MODES: { value: AdvanceMode; label: string }[] = [
+  { value: "paragraph", label: "Paragraph" },
+  { value: "sentence", label: "Sentence" },
+  { value: "word", label: "Word" },
+  { value: "syllable", label: "Syllable" },
+];
 
 export function ControlBar({
   textSize,
@@ -22,6 +36,8 @@ export function ControlBar({
   setLineHeight,
   returnMode,
   onToggleReturnMode,
+  advanceMode,
+  setAdvanceMode,
 }: ControlBarProps) {
   return (
     <div className="control-bar">
@@ -49,6 +65,21 @@ export function ControlBar({
           onDown={() => setLineHeight(Math.max(LINE_HEIGHT_RANGE[0], round1(lineHeight - 0.2)))}
           onUp={() => setLineHeight(Math.min(LINE_HEIGHT_RANGE[1], round1(lineHeight + 0.2)))}
         />
+        <div className="advance-mode-group" role="radiogroup" aria-label="Advance by">
+          <span className="control-label">Advance by</span>
+          {ADVANCE_MODES.map(({ value, label }) => (
+            <button
+              key={value}
+              type="button"
+              role="radio"
+              aria-checked={advanceMode === value}
+              className={`advance-mode-btn${advanceMode === value ? " advance-mode-btn--active" : ""}`}
+              onClick={() => setAdvanceMode(value)}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
         <button
           className={`return-btn${returnMode ? " return-btn--active" : ""}`}
           onClick={onToggleReturnMode}

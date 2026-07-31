@@ -139,16 +139,22 @@ body {
   border-radius: 4px;
   margin-right: 6px;
   cursor: default;
-  /* Sentence-level focus tier: no background of its own (that would be a
-     4th beige tint competing with the syllable/word/paragraph tiers
-     already locked in) -- text COLOR instead, black for the current
-     sentence and grey for others, never opacity-faded black pretending
-     to be grey. Color AND transition duration are set inline per-word by
-     ReadingPane.tsx (getWordFocus), not here -- the duration has to vary
-     (ambient fluid fade during normal reading vs. synced-to-the-pause
-     fade at a sentence boundary, see SENTENCE_PAUSE_MS in
-     useReadingState.ts), which a single static CSS rule can't express.
-     This class just carries the non-animated base layout styles.
+  /* Sentence-level focus tier has two different looks depending on
+     advance mode (see ReadingPane.tsx's SentenceTierStyle/tiersFor):
+     Word/Syllable mode use text COLOR (black for the current sentence,
+     grey for others, never opacity-faded black pretending to be grey) --
+     no background of their own there, since --tier-word is already
+     spent on the single current word/syllable. Sentence mode instead
+     keeps text permanently black and reuses that same --tier-word
+     background across every word in the current sentence (no finer
+     word-level tint competing for it in that mode). Paragraph mode sets
+     neither -- text stays black, no background. Color, background, AND
+     transition duration are all set inline per-word by ReadingPane.tsx
+     (getWordFocus), not here -- the duration has to vary (ambient fluid
+     fade during normal reading vs. synced-to-the-pause fade at a
+     sentence boundary, see SENTENCE_PAUSE_MS in useReadingState.ts),
+     which a single static CSS rule can't express. This class just
+     carries the non-animated base layout styles.
   */
 }
 .reading-word--current {
@@ -350,6 +356,39 @@ body {
   color: var(--muted);
   min-width: 28px;
   text-align: center;
+}
+
+/* "Advance by" segmented control (ControlBar.tsx) -- same chrome as
+   .control-group (light bordered pill), but holding a row of toggleable
+   buttons instead of a stepper, matching .return-btn's active-state
+   pattern (solid tint, not just an outline) so the selected granularity
+   reads clearly at a glance. */
+.advance-mode-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+.advance-mode-btn {
+  border: 1px solid var(--control-border);
+  background: #fff;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.advance-mode-btn:hover {
+  border-color: var(--tier-syllable);
+}
+.advance-mode-btn--active {
+  background: var(--tier-syllable);
+  color: var(--ink);
+  border-color: var(--tier-syllable);
+  font-weight: 600;
 }
 
 .return-btn {

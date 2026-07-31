@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { useReadingState } from "@/lib/useReadingState";
+import { useReadingState, type AdvanceMode } from "@/lib/useReadingState";
 import { useTapWord } from "@/lib/useTapWord";
 import { ReadingPane } from "./ReadingPane";
 import { ReturnBanner } from "./ReturnBanner";
@@ -9,6 +9,16 @@ import { ControlBar } from "./ControlBar";
 import { PassageLoader } from "./PassageLoader";
 import { BreathBanner } from "./BreathBanner";
 import { WordInfoPopover } from "./WordInfoPopover";
+
+// Singular noun for the hint line's "advance one ___ at a time" --
+// mirrors ControlBar.tsx's ADVANCE_MODES labels, just lowercase/singular
+// for reading naturally mid-sentence there.
+const ADVANCE_MODE_LABEL: Record<AdvanceMode, string> = {
+  syllable: "syllable",
+  word: "word",
+  sentence: "sentence",
+  paragraph: "paragraph",
+};
 
 export function ReadingScreen() {
   const state = useReadingState();
@@ -48,6 +58,7 @@ export function ReadingScreen() {
           isSentencePause={state.isSentencePause}
           pendingSentence={state.pendingSentence}
           returnMode={state.returnMode}
+          advanceMode={state.advanceMode}
           onWordClick={state.handleWordClick}
           onWordTap={tapWord.tapWord}
           tapWordOpen={tapWord.isOpen}
@@ -85,6 +96,8 @@ export function ReadingScreen() {
         lineHeight={state.lineHeight}
         setLineHeight={state.setLineHeight}
         returnMode={state.returnMode}
+        advanceMode={state.advanceMode}
+        setAdvanceMode={state.setAdvanceMode}
         onToggleReturnMode={() => {
           // Return-to mode repurposes word clicks for jump-to-word --
           // close any open tap-word card first so the two don't overlap.
@@ -98,7 +111,8 @@ export function ReadingScreen() {
           "Pausing before the next paragraph…"
         ) : (
           <>
-            Click the passage, then press <kbd>Space</kbd> to advance one syllable at a time.
+            Click the passage, then press <kbd>Space</kbd> to advance one {ADVANCE_MODE_LABEL[state.advanceMode]} at
+            a time.
             {!state.returnMode && " Tap any word to look it up."}
           </>
         )}
