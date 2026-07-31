@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, type RefObject } from "react";
 import { groupSyllables, type Syllable } from "@/lib/types";
 import { SENTENCE_PAUSE_MS, type AdvanceMode } from "@/lib/useReadingState";
 
@@ -46,6 +46,11 @@ interface ReadingPaneProps {
   tapWordOpen: boolean;
   onSpace: () => void;
   onRetreat: () => void;
+  // Shared with WordInfoPopover -- see the comment where ReadingScreen
+  // creates this. Tracks physical down-state for Space/ArrowRight across
+  // the handoff between this component's hold-to-define timer and that
+  // one's advance-on-keypress guard.
+  heldKeysRef: RefObject<Set<string>>;
 }
 
 // Reconstructs a sentence's plain text from the (paragraph, sentence)-
@@ -216,6 +221,7 @@ export function ReadingPane({
   tapWordOpen,
   onSpace,
   onRetreat,
+  heldKeysRef,
 }: ReadingPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const currentRef = useRef<HTMLSpanElement>(null);
@@ -310,6 +316,22 @@ export function ReadingPane({
           // hold would never reach it.
           if (e.repeat) return;
           if (returnMode || tapWordOpen) return;
+          // Record physical down-state in the SHARED tracker (see
+          // ReadingPane's heldKeysRef prop / ReadingScreen's comment) --
+          // deliberately AFTER the tapWordOpen check above, not before
+          // it. This handler still runs on every keydown regardless of
+          // tapWordOpen (React's synthetic dispatch on this element fires
+          // before the native event ever reaches WordInfoPopover's
+          // document-level listener), so marking unconditionally here
+          // would stamp "held" on every fresh press while a card is
+          // already open too -- poisoning WordInfoPopover's own "is this
+          // genuinely a new press" check a moment before it even runs,
+          // making it think every press was already held and silently
+          // swallowing all of them. Reached only when ReadingPane is
+          // actually about to start ITS OWN hold timer below -- once
+          // tapWordOpen is true, marking (and clearing) this ref for
+          // these two keys is WordInfoPopover's job alone.
+          heldKeysRef.current.add(e.code);
           holdConsumedRef.current = false;
           holdTimeoutRef.current = setTimeout(() => {
             holdTimeoutRef.current = null;
@@ -325,6 +347,14 @@ export function ReadingPane({
       }}
       onKeyUp={(e) => {
         if (e.code !== "Space" && e.code !== "ArrowRight") return;
+        // Always clear the shared tracker on release, regardless of mode
+        // -- this is the only place that does for the ordinary case
+        // where tap-word never opens at all (ReadingPane owns the whole
+        // press-release cycle by itself then), and it's harmless/
+        // idempotent on the handoff case where WordInfoPopover's own
+        // listener also clears the same entry for the same physical
+        // keyup.
+        heldKeysRef.current.delete(e.code);
         if (holdTimeoutRef.current) {
           // Released before the hold threshold -- a genuine tap. Cancel
           // the timer and perform the normal deferred advance.

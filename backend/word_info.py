@@ -19,31 +19,38 @@ Split two ways:
    example sentence both go through the background get_word_example
    call instead.
 
-   Respelling specifically used to be rule-based here too (a plain
-   IPA-symbol substitution table), on the theory that IPA -> friendly
-   spelling is basically mechanical. Real dictionaryapi.dev data proved
-   that wrong two ways: (a) it almost never includes syllable-separating
-   dots, so there's no reliable place to put hyphens without real
-   syllabification, and the naive fallback (treat the whole word as one
-   syllable) produced ugly, hard-to-read all-caps blobs; (b) it uses IPA
-   symbols a plain "textbook" table doesn't cover -- e.g. "preview" comes
-   back as /ˈpɹiːvjʉː/, using ɹ (not r) and ʉ (not u), and an unmapped
-   symbol was silently DROPPED rather than approximated, so the r-sound
-   vanished entirely and the respelling ("PEEVY") didn't even sound like
-   the word. That's a correctness bug, not just a rough edge -- so
-   respelling moved to Claude (still grounded in the real IPA when one
-   exists), same call that already generates the example sentence.
-   respell_from_ipa() is kept below purely as a last-resort fallback if
-   that call ever comes back without one.
+   Respelling used to be handed to Claude alongside the example sentence
+   (still grounded in the real IPA when one existed, but ultimately
+   free-text the model wrote). That let genuine phonetic mistakes slip
+   through with no dictionary backing them -- e.g. "fluency"
+   (/ˈfluːənsi/, correctly "FLOO-uhn-see") coming back from Claude as
+   "FLOO-un-nee", an invented final syllable that doesn't match the real
+   pronunciation at all. That's not acceptable for a tool whose whole
+   point is showing struggling readers a TRUSTWORTHY pronunciation, so
+   respelling is now rule-based end to end: mechanically derived from
+   the real dictionaryapi.dev IPA via respell_from_ipa(), never
+   generated/invented by the model. See respell_from_ipa()'s docstring
+   for how it syllabifies even the common case where dictionaryapi.dev's
+   IPA has no syllable-separating dots (most of them don't) -- earlier
+   versions of this function only handled the WITH-dots case correctly
+   and fell back to an unhyphenated blob otherwise; it now derives real
+   syllable boundaries straight from the IPA's own vowel nuclei using a
+   standard maximal-onset rule, so hyphenation and stress placement are
+   correct even without dots. Because this no longer needs Claude at
+   all, get_word_info_quick can fill in `respelling` immediately
+   alongside the IPA whenever the dictionary has one -- no waiting on
+   the background call for it anymore. Claude is still asked for its
+   own best-effort ipa in the rare case dictionaryapi.dev has none at
+   all (see need_ipa below); respelling is then derived from THAT ipa
+   the same mechanical way, rather than asked for separately, so it's
+   never independently-invented text even in that fallback case.
 
    The frontend fires both requests the moment a word is tapped (see
-   useTapWord.ts). Raw IPA, definition, morphology, and hear-aloud show
-   immediately; the friendly respelling (a small piece of the
-   pronunciation stage) and the example sentence (the whole last stage)
-   fill in a beat later once the background call resolves -- still a
-   real win over the original design where the WHOLE card waited on one
-   Claude round trip, just an honest one instead of an all-or-nothing
-   claim.
+   useTapWord.ts). Raw IPA, respelling, definition, morphology, and
+   hear-aloud show immediately in the common case; only the example
+   sentence (the whole last stage) -- and, for the rare word
+   dictionaryapi.dev has nothing on, the ipa/respelling too -- fill in a
+   beat later once the background call resolves.
 
    Fallback: if dictionaryapi.dev has genuinely nothing for a word
    (proper nouns, slang, typos), get_word_example also asks Claude for
@@ -75,17 +82,21 @@ Split two ways:
      list (cached from the quick fetch so this doesn't cost a second
      dictionary round trip) and told to pick whichever one actually
      fits, or write its own if genuinely none do. The result patches
-     into the card a beat later exactly the way respelling already
-     does -- see get_word_example's docstring.
+     into the card a beat later once the background call resolves --
+     see get_word_example's docstring.
 """
 
+import logging
 import os
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 
 import httpx
-from anthropic import Anthropic
+from anthropic import Anthropic, APIConnectionError, APIStatusError, APITimeoutError
+
+logger = logging.getLogger(__name__)
 
 DICTIONARY_API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
 
@@ -94,6 +105,42 @@ DICTIONARY_API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
 # fail fast into the Claude-only fallback rather than making a student
 # wait on the full 5s+ a more lenient timeout would allow.
 _DICTIONARY_TIMEOUT_S = 2.5
+
+# Belt-and-suspenders on top of _DICTIONARY_TIMEOUT_S above: httpx's own
+# `timeout=` kwarg is passed to every dictionaryapi.dev call, but it only
+# reliably bounds the parts of the request httpx itself controls. DNS
+# resolution goes through the stdlib's blocking socket.getaddrinfo(),
+# which has no timeout parameter of its own and isn't reliably
+# interruptible -- on some networks (school/corporate VPNs, broken IPv6
+# search-domain configs, the same general class of "curl works, Python
+# doesn't" issue TROUBLESHOOTING.md already documents for the Anthropic
+# leg) that lookup can hang well past whatever timeout= says, and httpx
+# has no way to enforce a limit on a syscall it doesn't control. A tap
+# on an ordinary word sitting on "Looking it up..." for the full 15s
+# frontend abort (see useTapWord.ts's FETCH_TIMEOUT_MS) with the backend
+# never responding at all -- not slow, literally silent -- is exactly
+# what that failure mode looks like from the outside.
+#
+# _fetch_dictionary_entry_exact wraps its real work in a dedicated
+# executor and enforces this as a hard wall-clock deadline from OUTSIDE,
+# the same "don't just trust the library's own timeout" principle
+# applied to the Anthropic client in _get_anthropic_client() above.
+# +1.0s over _DICTIONARY_TIMEOUT_S gives httpx's own timeout a full
+# chance to fire normally first; this is the backstop for when it can't.
+_DICTIONARY_HARD_DEADLINE_S = _DICTIONARY_TIMEOUT_S + 1.0
+
+# Shared across every dictionary call (both fetch_dictionary_entry's
+# parallel stemmed-candidate lookups and analyze_morphology's sequential
+# prefix/suffix root checks) rather than a fresh executor per call --
+# cheaper, and gives a natural cap on how many calls can be genuinely
+# stuck at once. If a call's underlying socket call truly can't be
+# interrupted, its worker thread is lost for the life of the process
+# either way; capping max_workers just bounds how many can leak before
+# new lookups start queuing behind them -- and a queued-but-not-yet-
+# started lookup still correctly hits its deadline via
+# Future.result(timeout=...) below, so a caller is never blocked longer
+# than _DICTIONARY_HARD_DEADLINE_S even under full exhaustion.
+_dictionary_executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="dict-lookup")
 
 # Same idea as syllabify.py's _WORD_RE: strip surrounding punctuation so
 # "hallucinate," or "(dog." look up cleanly. Unlike syllabify.py we don't
@@ -128,11 +175,35 @@ def _get_anthropic_client() -> Anthropic:
     `LocalProtocolError: Illegal header value`, which the SDK then wraps
     in a generic APIConnectionError that gives no hint it was ever a key
     formatting problem rather than a real connectivity one.
+
+    timeout/max_retries are also overridden here rather than left at the
+    SDK's defaults (httpx.Timeout(timeout=10*60, connect=5.0),
+    max_retries=2) -- and critically, each retry gets its OWN fresh
+    timeout budget, so the unbounded worst case for one tap was really
+    ~3 attempts x 10 minutes, not just 10. A flaky leg to the Anthropic
+    API (see TROUBLESHOOTING.md's "Anthropic API connectivity" section)
+    could then pin a FastAPI worker thread for up to ~30 minutes on a
+    single word-example request, with the frontend's own 15s
+    AbortController (see useTapWord.ts's FETCH_TIMEOUT_MS) doing nothing
+    to stop it -- that abort only stops the browser from waiting, it
+    doesn't cancel this synchronous backend call. Bounded to
+    connect=2.5s (matching this file's own _DICTIONARY_TIMEOUT_S "fail
+    fast into the fallback" convention) and 5.0s for every other phase,
+    with max_retries=1 (one automatic retry for a transient blip,
+    without multiplying the worst case back up): 2 attempts x 5.0s + a
+    small jittered backoff is ~10.5s worst case, comfortably inside the
+    frontend's 15s budget so the backend's own specific 502 error
+    reaches the student before the browser's generic "taking too long"
+    fallback would even fire.
     """
     global _anthropic_client
     if _anthropic_client is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        _anthropic_client = Anthropic(api_key=api_key)
+        _anthropic_client = Anthropic(
+            api_key=api_key,
+            timeout=httpx.Timeout(timeout=5.0, connect=2.5),
+            max_retries=1,
+        )
     return _anthropic_client
 
 
@@ -168,9 +239,12 @@ def _stem_candidates(word: str) -> list[str]:
 _MAX_DEFINITION_CANDIDATES = 10
 
 
-def _fetch_dictionary_entry_exact(word: str) -> dict | None:
-    """One lookup against dictionaryapi.dev for the exact string given --
-    no stemming. Returns
+def _fetch_dictionary_entry_exact_uncapped(word: str) -> dict | None:
+    """The actual dictionaryapi.dev lookup -- see
+    _fetch_dictionary_entry_exact (the public entry point every caller
+    should use instead) for why this is split out and wrapped with a
+    hard external deadline. One lookup for the exact string given -- no
+    stemming. Returns
     {"ipa": str | None, "definition": str | None, "definitions": [...]}
     on success, or None on a 404/network/parse failure. `definition` is
     just `definitions[0]["definition"]` for callers (e.g.
@@ -222,6 +296,33 @@ def _fetch_dictionary_entry_exact(word: str) -> dict | None:
         "definition": definitions[0]["definition"] if definitions else None,
         "definitions": definitions,
     }
+
+
+def _fetch_dictionary_entry_exact(word: str) -> dict | None:
+    """Public entry point every caller (fetch_dictionary_entry,
+    analyze_morphology) should use instead of the _uncapped version
+    above. Same signature and return contract, but enforces
+    _DICTIONARY_HARD_DEADLINE_S as a real wall-clock cap from OUTSIDE
+    the call, in case the underlying request hangs somewhere httpx's own
+    `timeout=` doesn't reach (see _DICTIONARY_HARD_DEADLINE_S's comment
+    -- DNS resolution is the prime suspect). A deadline hit is treated
+    exactly like any other lookup failure (returns None, same as a
+    404/network/parse error), just logged first so it's distinguishable
+    from an ordinary miss if this shows up in practice."""
+    future = _dictionary_executor.submit(_fetch_dictionary_entry_exact_uncapped, word)
+    try:
+        return future.result(timeout=_DICTIONARY_HARD_DEADLINE_S)
+    except FutureTimeoutError:
+        future.cancel()  # no-op if already running, but frees it if it was still queued
+        logger.warning(
+            "Dictionary lookup for %r exceeded the %.1fs hard deadline -- httpx's own %.1fs "
+            "timeout apparently didn't fire (likely a DNS/connect-level hang, not a slow "
+            "response). Treating as a miss.",
+            word,
+            _DICTIONARY_HARD_DEADLINE_S,
+            _DICTIONARY_TIMEOUT_S,
+        )
+        return None
 
 
 def fetch_dictionary_entry(word: str) -> dict | None:
@@ -335,17 +436,15 @@ def _pick_best_definition(candidates: list[dict], sentence: str) -> str:
     return candidates[best_idx]["definition"]
 
 
-# --- Rule-based respelling (fallback only, not the primary path) ------
+# --- Rule-based respelling (the ONLY path -- see module docstring) ----
 #
-# See the module docstring for why this is no longer what generates the
-# respelling shown to students -- it's kept as a last-resort fallback for
-# the rare case the background Claude call doesn't return one. Covers the
-# common English IPA phonemes AND the specific symbol variants
+# Covers the common English IPA phonemes AND the specific symbol variants
 # dictionaryapi.dev's real data actually uses (ɹ, ʉ, ɚ, ɡ, tied
 # affricates like t͡ʃ), verified against live API responses for
 # "hallucinate", "preview", "elephant", "happy", "adventure", and
-# "important" while diagnosing the bug that moved respelling off this
-# path in the first place.
+# "important" while diagnosing the r-dropping bug that first motivated
+# this table, and again against "fluency" while diagnosing the
+# LLM-invented-syllable bug that moved respelling off Claude entirely.
 
 _STRESS_MARKS = "ˈˌ"
 
@@ -364,80 +463,95 @@ def _strip_combining_marks(s: str) -> str:
 # Longest-match-first: multi-character IPA sequences (diphthongs, r-colored
 # vowels, affricates, digraphs) must be checked before their component
 # single characters, or e.g. "eɪ" would get chopped into "e" + "ɪ".
-_IPA_REPLACEMENTS: list[tuple[str, str]] = [
-    ("eɪ", "ay"),
-    ("aɪ", "eye"),
-    ("ɔɪ", "oy"),
-    ("aʊ", "ow"),
-    ("oʊ", "oh"),
-    ("ɪər", "eer"),
-    ("ɛər", "air"),
-    ("ʊər", "oor"),
-    ("ɑːr", "ar"),
-    ("ɔːr", "or"),
-    ("ɜːr", "ur"),
-    ("ɔɹ", "or"),
-    ("ɑɹ", "ar"),
-    ("ɪɹ", "eer"),
-    ("ɛɹ", "air"),
-    ("iː", "ee"),
-    ("uː", "oo"),
-    ("ɑː", "ah"),
-    ("ɔː", "aw"),
-    ("ɜː", "ur"),
-    ("tʃ", "ch"),
-    ("dʒ", "j"),
-    ("ʃ", "sh"),
-    ("ʒ", "zh"),
-    ("θ", "th"),
-    ("ð", "th"),
-    ("ŋ", "ng"),
-    ("ɹ", "r"),  # the symbol dictionaryapi.dev actually uses for English r, not plain "r"
-    ("ʉ", "oo"),  # fronted "u" variant seen in some entries
-    ("ɚ", "er"),  # rhotacized schwa, e.g. the end of "adventure"
-    ("ɝ", "ur"),  # stressed rhotacized vowel, e.g. "bird"
-    ("ɡ", "g"),  # IPA script-g codepoint, distinct from ASCII "g"
-    ("ʔ", ""),  # glottal stop -- no clean English-spelling equivalent, drop silently
-    ("j", "y"),
-    ("ɪ", "ih"),
-    ("ʊ", "uu"),
-    ("ʌ", "uh"),
-    ("ə", "uh"),
-    ("æ", "a"),
-    ("ɛ", "eh"),
-    ("ɒ", "ah"),
-    ("ɔ", "aw"),
-    ("e", "eh"),
-    ("ɑ", "ah"),
-    ("i", "ee"),
-    ("u", "oo"),
-    ("o", "oh"),
-    ("a", "ah"),
-    ("r", "r"),
-    ("l", "l"),
-    ("w", "w"),
-    ("h", "h"),
-    ("m", "m"),
-    ("n", "n"),
-    ("p", "p"),
-    ("b", "b"),
-    ("t", "t"),
-    ("d", "d"),
-    ("k", "k"),
-    ("g", "g"),
-    ("f", "f"),
-    ("v", "v"),
-    ("s", "s"),
-    ("z", "z"),
+#
+# Third element is_vowel marks which entries are syllable NUCLEI (vowels,
+# diphthongs, r-colored/syllabic vowels) vs. everything else (true
+# consonants, plus glides j/w which pattern as consonants in English).
+# That distinction is what makes real syllabification possible straight
+# from the IPA even when dictionaryapi.dev gives us no syllable-
+# separating dots at all (see respell_from_ipa) -- syllable boundaries
+# fall out of where the vowel nuclei are, the same way a linguist would
+# find them. ʔ (glottal stop) is neither -- it has no clean English-
+# spelling equivalent and isn't syllabic, so it's dropped silently and
+# never emitted as a token at all.
+_IPA_REPLACEMENTS: list[tuple[str, str, bool | None]] = [
+    ("eɪ", "ay", True),
+    ("aɪ", "eye", True),
+    ("ɔɪ", "oy", True),
+    ("aʊ", "ow", True),
+    ("oʊ", "oh", True),
+    ("ɪər", "eer", True),
+    ("ɛər", "air", True),
+    ("ʊər", "oor", True),
+    ("ɑːr", "ar", True),
+    ("ɔːr", "or", True),
+    ("ɜːr", "ur", True),
+    ("ɔɹ", "or", True),
+    ("ɑɹ", "ar", True),
+    ("ɪɹ", "eer", True),
+    ("ɛɹ", "air", True),
+    ("iː", "ee", True),
+    ("uː", "oo", True),
+    ("ɑː", "ah", True),
+    ("ɔː", "aw", True),
+    ("ɜː", "ur", True),
+    ("tʃ", "ch", False),
+    ("dʒ", "j", False),
+    ("ʃ", "sh", False),
+    ("ʒ", "zh", False),
+    ("θ", "th", False),
+    ("ð", "th", False),
+    ("ŋ", "ng", False),
+    ("ɹ", "r", False),  # the symbol dictionaryapi.dev actually uses for English r, not plain "r"
+    ("ʉ", "oo", True),  # fronted "u" variant seen in some entries
+    ("ɚ", "er", True),  # rhotacized schwa, e.g. the end of "adventure"
+    ("ɝ", "ur", True),  # stressed rhotacized vowel, e.g. "bird"
+    ("ɡ", "g", False),  # IPA script-g codepoint, distinct from ASCII "g"
+    ("ʔ", "", None),  # glottal stop -- no clean English-spelling equivalent, drop silently
+    ("j", "y", False),
+    ("ɪ", "ih", True),
+    ("ʊ", "uu", True),
+    ("ʌ", "uh", True),
+    ("ə", "uh", True),
+    ("æ", "a", True),
+    ("ɛ", "eh", True),
+    ("ɒ", "ah", True),
+    ("ɔ", "aw", True),
+    ("e", "eh", True),
+    ("ɑ", "ah", True),
+    ("i", "ee", True),
+    ("u", "oo", True),
+    ("o", "oh", True),
+    ("a", "ah", True),
+    ("r", "r", False),
+    ("l", "l", False),
+    ("w", "w", False),
+    ("h", "h", False),
+    ("m", "m", False),
+    ("n", "n", False),
+    ("p", "p", False),
+    ("b", "b", False),
+    ("t", "t", False),
+    ("d", "d", False),
+    ("k", "k", False),
+    ("g", "g", False),
+    ("f", "f", False),
+    ("v", "v", False),
+    ("s", "s", False),
+    ("z", "z", False),
 ]
 
 
 def _respell_syllable(syl: str) -> str:
+    """Flat (non-syllabified) respelling of a single already-isolated
+    chunk of IPA -- used for the WITH-dots path below, where
+    dictionaryapi.dev already told us where the syllable breaks are, so
+    there's nothing left for this to figure out on its own."""
     out = []
     i = 0
     while i < len(syl):
         matched = False
-        for ipa_seq, respell in _IPA_REPLACEMENTS:
+        for ipa_seq, respell, _is_vowel in _IPA_REPLACEMENTS:
             if syl.startswith(ipa_seq, i):
                 out.append(respell)
                 i += len(ipa_seq)
@@ -448,18 +562,90 @@ def _respell_syllable(syl: str) -> str:
     return "".join(out) if out else syl
 
 
+def _tokenize_ipa(stripped: str) -> list[tuple[str, bool, bool]]:
+    """Turn stress-mark-and-combining-mark-stripped IPA into a list of
+    (respelled_piece, is_vowel, is_stressed) triples, longest-IPA-match-
+    first (see _IPA_REPLACEMENTS). Stress marks are consumed as a
+    zero-width flag carried forward onto the NEXT vowel token reached
+    (stress belongs to a syllable's nucleus, and a stressed syllable can
+    still start with one or more consonants -- e.g. "photograph"'s
+    /ˈfoʊ.../ marks f as un-stressed and oʊ as the stressed nucleus, not
+    the mark's literal position). ʔ and any unrecognized character are
+    dropped entirely -- they're not emitted as tokens at all, so they
+    can't wrongly split what should be one syllable into two."""
+    tokens: list[tuple[str, bool, bool]] = []
+    i = 0
+    pending_stress = False
+    while i < len(stripped):
+        ch = stripped[i]
+        if ch in _STRESS_MARKS:
+            if ch == "ˈ":
+                pending_stress = True
+            i += 1
+            continue
+        matched = False
+        for ipa_seq, respell, is_vowel in _IPA_REPLACEMENTS:
+            if stripped.startswith(ipa_seq, i):
+                if respell:  # skip ʔ's empty mapping -- see _IPA_REPLACEMENTS comment
+                    if is_vowel:
+                        tokens.append((respell, True, pending_stress))
+                        pending_stress = False
+                    else:
+                        tokens.append((respell, False, False))
+                i += len(ipa_seq)
+                matched = True
+                break
+        if not matched:
+            i += 1  # unrecognized character -- skip it, same as _respell_syllable
+    return tokens
+
+
+def _group_into_syllables(tokens: list[tuple[str, bool, bool]]) -> list[list[tuple[str, bool, bool]]] | None:
+    """Groups phoneme tokens into syllables using the standard "maximal
+    onset" approximation: a run of consonants between two vowel nuclei
+    all go to the FOLLOWING syllable's onset except one, which stays
+    behind as the preceding syllable's coda (so V-C-V splits as V.CV,
+    one consonant moving entirely to the next syllable, while V-CC-V
+    splits as VC.CV). Leading consonants before the first vowel are the
+    first syllable's onset; trailing consonants after the last vowel are
+    the last syllable's coda. Returns None if there's no vowel at all
+    (e.g. tokenization found nothing usable) so the caller can fall back
+    to a flat, unsegmented respelling rather than guessing."""
+    vowel_idxs = [i for i, t in enumerate(tokens) if t[1]]
+    if not vowel_idxs:
+        return None
+    syllables = []
+    start = 0
+    for k, vowel_i in enumerate(vowel_idxs):
+        if k == len(vowel_idxs) - 1:
+            end = len(tokens)  # last syllable soaks up all remaining coda consonants
+        else:
+            between = vowel_idxs[k + 1] - vowel_i - 1
+            end = vowel_i + 1 + max(0, between - 1)
+        syllables.append(tokens[start:end])
+        start = end
+    return syllables
+
+
 def respell_from_ipa(ipa: str) -> str:
-    """Rule-based IPA -> friendly respelling -- fallback path only, see
-    the module docstring. Returns "" for empty input rather than
-    guessing. In practice dictionaryapi.dev's IPA strings essentially
-    never include syllable-separating dots, so real syllabification
-    isn't available here; when dots ARE present each syllable is
-    respelled and hyphenated separately, and otherwise the whole
-    transcription is respelled as one continuous (lowercase, not
-    all-caps) string with the stress mark's position dropped rather than
-    faked -- deliberately not capitalizing an arbitrary whole chunk,
-    which is what produced unreadable all-caps blobs before this was
-    diagnosed."""
+    """Rule-based, dictionary-grounded IPA -> friendly respelling -- see
+    the module docstring for why this is now the ONLY path (never
+    Claude-generated). Returns "" for empty input rather than guessing.
+
+    When dictionaryapi.dev's IPA includes syllable-separating dots (rare
+    in practice), each dot-delimited syllable is respelled and
+    hyphenated using that given boundary directly. Far more often there
+    are no dots at all -- in that case, real syllable boundaries are
+    derived straight from the IPA's own vowel nuclei via
+    _tokenize_ipa/_group_into_syllables (a standard maximal-onset
+    syllabification), so hyphenation and stress placement are correct
+    without needing dots. Whichever syllable carries the primary stress
+    mark is capitalized; if no stress mark was present at all, the first
+    syllable is (mirroring English's own tendency and giving a
+    deterministic, non-arbitrary default). Only falls back to a flat,
+    unsegmented lowercase string if no vowel could be identified at all
+    (extremely unusual IPA/edge-case input) -- better than crashing or
+    guessing syllable breaks with no signal to base them on."""
     if not ipa:
         return ""
     stripped = ipa.strip().strip("/[]")
@@ -483,12 +669,27 @@ def respell_from_ipa(ipa: str) -> str:
         respelled[stressed_index] = respelled[stressed_index].upper()
         return "-".join(respelled)
 
-    # No syllable dots (the common case for this data source) -- respell
-    # continuously rather than guessing where syllable breaks are.
-    clean = stripped
-    for mark in _STRESS_MARKS:
-        clean = clean.replace(mark, "")
-    return _respell_syllable(clean)
+    # No syllable dots (the common case for this data source) -- derive
+    # real syllable boundaries from the IPA's own vowel nuclei instead of
+    # guessing or leaving it as one unhyphenated blob.
+    tokens = _tokenize_ipa(stripped)
+    syllables = _group_into_syllables(tokens)
+    if syllables is None:
+        # No vowel found at all -- nothing to syllabify around. Fall back
+        # to the old flat behavior rather than fabricate a split.
+        clean = stripped
+        for mark in _STRESS_MARKS:
+            clean = clean.replace(mark, "")
+        return _respell_syllable(clean)
+
+    stressed_index = 0
+    for i, syl in enumerate(syllables):
+        if any(t[2] for t in syl):
+            stressed_index = i
+            break
+    parts = ["".join(t[0] for t in syl) for syl in syllables]
+    parts[stressed_index] = parts[stressed_index].upper()
+    return "-".join(parts)
 
 
 # --- Rule-based morphology breakdown (no LLM) -------------------------
@@ -581,8 +782,12 @@ def analyze_morphology(word: str) -> dict | None:
 # the other hand, is exactly the thing that's supposed to change with
 # context (see the module docstring's "Word-sense disambiguation"
 # section), so _quick_cache and _example_cache -- and therefore the
-# `definition` (and `respelling`/`example_sentence`, generated alongside
-# it) they hold -- are keyed by (word, sentence) together. A repeat tap
+# `definition` (and `example_sentence`, generated alongside it) they
+# hold -- are keyed by (word, sentence) together. `respelling` lives in
+# the same per-(word, sentence) cache entries for simplicity even though
+# it's really only a function of the word's ipa, not the sentence -- a
+# harmless bit of redundant recomputation the one time a word repeats in
+# a new sentence, not a correctness issue. A repeat tap
 # of the same word in the SAME sentence still hits cache instantly, same
 # as before; the same word met again in a DIFFERENT sentence now
 # correctly re-evaluates instead of silently reusing a possibly
@@ -596,10 +801,11 @@ _example_cache: dict[tuple[str, str], dict] = {}
 
 
 def get_word_info_quick(word: str, sentence: str) -> dict:
-    """Fast path: dictionary lookup + rule-based morphology. NO Claude
-    call -- this is what makes the raw pronunciation (IPA), definition,
-    morphology, and hear-aloud available essentially instantly for any
-    word the dictionary has. Powers POST /api/word-info.
+    """Fast path: dictionary lookup + rule-based morphology + rule-based
+    respelling. NO Claude call -- this is what makes the raw
+    pronunciation (IPA + respelling), definition, morphology, and
+    hear-aloud available essentially instantly for any word the
+    dictionary has. Powers POST /api/word-info.
 
     `definition` is picked via _pick_best_definition -- a fast, rule-based
     best guess at which of the dictionary's candidate senses fits this
@@ -607,13 +813,18 @@ def get_word_info_quick(word: str, sentence: str) -> dict:
     It's still just a heuristic, though; get_word_example's background
     Claude call confirms/corrects it a beat later with real language
     understanding (see the module docstring's "Word-sense
-    disambiguation" section) the same way it already does for respelling.
+    disambiguation" section).
 
-    `respelling`/`example_sentence` come back as "" here -- the frontend
-    fetches those separately via get_word_example (POST /api/word-example,
-    fired in parallel at tap time) and patches them in once that
-    resolves, since both genuinely need Claude's judgment (see the module
-    docstring for why respelling moved off the rule-based path)."""
+    `respelling` is derived from `ipa` via respell_from_ipa() whenever the
+    dictionary had one -- both pronunciation fields come straight from
+    the dictionary now, no LLM involved (see the module docstring). It
+    only comes back "" here in the rare case the dictionary had no ipa
+    at all, in which case the frontend's get_word_example call (POST
+    /api/word-example, fired in parallel at tap time) asks Claude for a
+    best-effort ipa and derives respelling from THAT the same mechanical
+    way, patching both in once that resolves. `example_sentence` always
+    comes back "" here -- that one's Claude's job unconditionally, no
+    dictionary equivalent exists for it."""
     cleaned = clean_word(word)
     if not cleaned:
         cleaned = word.strip().lower()
@@ -640,7 +851,7 @@ def get_word_info_quick(word: str, sentence: str) -> dict:
     result = {
         "word": cleaned,
         "ipa": ipa,
-        "respelling": "",
+        "respelling": respell_from_ipa(ipa) if ipa else "",
         "definition": definition,
         "morphology": morphology,
         "example_sentence": "",
@@ -653,19 +864,10 @@ def get_word_info_quick(word: str, sentence: str) -> dict:
 
 _ENRICH_TOOL = {
     "name": "word_enrich",
-    "description": "Friendly respelling and a new example sentence for one word, plus best-effort ipa/definition if asked for.",
+    "description": "A new example sentence for one word, plus best-effort ipa/definition if asked for.",
     "input_schema": {
         "type": "object",
         "properties": {
-            "respelling": {
-                "type": "string",
-                "description": (
-                    "Friendly syllable-stress respelling grounded in the given ipa "
-                    "(or your own best-effort ipa if none was given), e.g. "
-                    "'huh-LOO-sih-nayt' for \"hallucinate\" -- capitalize the "
-                    "stressed syllable, hyphenate the rest."
-                ),
-            },
             "example_sentence": {
                 "type": "string",
                 "description": (
@@ -693,31 +895,30 @@ _ENRICH_TOOL = {
                 ),
             },
         },
-        "required": ["respelling", "example_sentence", "definition"],
+        "required": ["example_sentence", "definition"],
     },
 }
 
 
-def _generate_enrichment(
-    word: str, sentence: str, known_ipa: str, need_ipa: bool, candidate_definitions: list[dict]
-) -> dict:
-    """The one background Claude call per word: always a respelling, a
-    new example sentence, and a context-checked definition, plus a
-    best-effort ipa when dictionaryapi.dev didn't have one (a common
-    partial case, not a rare one -- see the module docstring).
+def _generate_enrichment(word: str, sentence: str, need_ipa: bool, candidate_definitions: list[dict]) -> dict:
+    """The one background Claude call per word: always a new example
+    sentence and a context-checked definition, plus a best-effort ipa
+    when dictionaryapi.dev didn't have one (a common partial case, not a
+    rare one -- see the module docstring). Notably NOT asked for a
+    respelling anymore -- that's derived mechanically from real ipa via
+    respell_from_ipa() now, never invented by the model (see the module
+    docstring for why: an LLM-written respelling had no dictionary
+    backing it and could just be wrong, e.g. "fluency" coming back as
+    "FLOO-un-nee" instead of the correct "FLOO-uhn-see").
 
     The definition is asked for every time now, not just when the
     dictionary had nothing -- dictionaryapi.dev usually returns several
     candidate senses for a word, and get_word_info_quick's fast
     word-overlap heuristic (_pick_best_definition) is only a rough first
     guess at which one fits this sentence. This call is what actually
-    confirms or corrects that guess with real language understanding,
-    the same "instant guess now, Claude patches it a beat later" pattern
-    already used for respelling. See the module docstring's "Word-sense
-    disambiguation" section."""
+    confirms or corrects that guess with real language understanding.
+    See the module docstring's "Word-sense disambiguation" section."""
     known = []
-    if known_ipa:
-        known.append(f'Real dictionary IPA: "{known_ipa}" -- ground the respelling in this exactly.')
 
     need_definition = not candidate_definitions
     if candidate_definitions:
@@ -730,7 +931,7 @@ def _generate_enrichment(
             f"word is actually used in the sentence above -- not necessarily #1):\n{numbered}"
         )
 
-    asks = ["a friendly respelling", "a new example sentence"]
+    asks = ["a new example sentence"]
     if need_ipa:
         asks.append("your own best-effort ipa (no dictionary pronunciation was found for this word)")
     if need_definition:
@@ -748,13 +949,41 @@ def _generate_enrichment(
         "Call the word_enrich tool."
     )
     client = _get_anthropic_client()
-    response = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=512,
-        tools=[_ENRICH_TOOL],
-        tool_choice={"type": "tool", "name": "word_enrich"},
-        messages=[{"role": "user", "content": prompt}],
-    )
+    # No timeout= override here -- this is the only call site that uses
+    # this client, so it inherits the bounded timeout/max_retries set
+    # once in _get_anthropic_client() above. If a second call site is
+    # ever added, decide explicitly whether it should share that budget
+    # rather than silently inheriting this comment's assumption.
+    #
+    # Logged (not just left to main.py's catch-all 502 handler) so a
+    # timeout vs. a connection error vs. an API-level error are
+    # distinguishable in dev.sh's [backend] output -- see
+    # TROUBLESHOOTING.md's "Anthropic API connectivity" section, which
+    # has an open question about *why* connections intermittently fail;
+    # this doesn't answer that, but it stops it from being a silent
+    # multi-minute hang with no diagnostic trail. Order matters:
+    # APITimeoutError is a SUBCLASS of APIConnectionError, so it must be
+    # caught first or it silently falls into the more generic branch.
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=512,
+            tools=[_ENRICH_TOOL],
+            tool_choice={"type": "tool", "name": "word_enrich"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except APITimeoutError as exc:
+        logger.warning("Anthropic call timed out for %r: %s", word, exc)
+        raise
+    except APIConnectionError as exc:
+        # exc.__cause__ is where the real underlying httpx/ssl error
+        # shows up -- e.g. exactly what TROUBLESHOOTING.md's suspected
+        # TLS-inspecting-proxy theory would need to confirm or rule out.
+        logger.warning("Anthropic connection error for %r: %s (cause=%r)", word, exc, exc.__cause__)
+        raise
+    except APIStatusError as exc:
+        logger.warning("Anthropic API error for %r: status=%s body=%s", word, exc.status_code, exc.message)
+        raise
     tool_use = next(b for b in response.content if b.type == "tool_use")
     return tool_use.input
 
@@ -762,11 +991,11 @@ def _generate_enrichment(
 def get_word_example(word: str, sentence: str) -> dict:
     """Slow path: the fields that genuinely need Claude. Fetched by the
     frontend in parallel with get_word_info_quick (see useTapWord.ts),
-    and merged into the card once it resolves -- raw pronunciation/
-    definition/morphology/hear-aloud are already showable by the time
-    this lands, so only the respelling (a small piece of stage 1) and the
-    example sentence (all of stage 5) are ever waiting on it. Powers
-    POST /api/word-example.
+    and merged into the card once it resolves -- raw pronunciation
+    (ipa + respelling)/definition/morphology/hear-aloud are already
+    showable by the time this lands in the common case, so usually only
+    the example sentence (all of stage 5) is waiting on it. Powers POST
+    /api/word-example.
 
     Always returns {"respelling", "example_sentence", "definition"} --
     `definition` is Claude's context-checked pick/correction of
@@ -775,17 +1004,23 @@ def get_word_example(word: str, sentence: str) -> dict:
     fallback for words the dictionary had nothing for, so the frontend's
     existing merge-on-resolve (see useTapWord.ts's fetchExampleOnly)
     already overwrites whatever the quick heuristic guessed with the
-    confirmed one once this resolves -- no frontend change needed. In
-    the common partial case (dictionary had a definition but no
-    phonetics, e.g. "hallucinate" itself) also returns "ipa" -- and
-    backfills both _quick_cache (this exact word+sentence) and
-    _dictionary_cache (this word, every sentence) with the invented ipa,
-    so neither this function nor a fresh dictionary lookup has to run
-    again for the same gap. `definition`/`respelling`/`example_sentence`
-    are cached per (word, sentence) -- see _quick_cache's comment --
-    since which sense fits, and the example illustrating it, are exactly
-    the things that should change if the same word shows up again in a
-    different sentence."""
+    confirmed one once this resolves -- no frontend change needed.
+    `respelling` is ALWAYS included too (even though it usually hasn't
+    changed since the quick fetch) because the frontend's merge is a
+    plain object spread -- omitting the key here would be fine, but
+    including it defensively means this function's output is self-
+    contained and correct on its own, not dependent on the caller never
+    having called it without a prior quick fetch. In the common partial
+    case (dictionary had a definition but no phonetics, e.g.
+    "hallucinate" itself) also returns "ipa" -- and backfills both
+    _quick_cache (this exact word+sentence) and _dictionary_cache (this
+    word, every sentence) with the invented ipa, so neither this
+    function nor a fresh dictionary lookup has to run again for the same
+    gap. `definition`/`respelling`/`example_sentence` are cached per
+    (word, sentence) -- see _quick_cache's comment -- since which sense
+    fits, and the example illustrating it, are exactly the things that
+    should change if the same word shows up again in a different
+    sentence."""
     cleaned = clean_word(word)
     if not cleaned:
         cleaned = word.strip().lower()
@@ -801,10 +1036,15 @@ def get_word_example(word: str, sentence: str) -> dict:
     dictionary_entry = _dictionary_cache.get(cleaned) or {}
     candidates = dictionary_entry.get("definitions") or []
 
-    data = _generate_enrichment(cleaned, sentence, quick["ipa"], need_ipa, candidates)
+    data = _generate_enrichment(cleaned, sentence, need_ipa, candidates)
 
-    ipa_for_respelling = data.get("ipa") if need_ipa else quick["ipa"]
-    respelling = data.get("respelling") or respell_from_ipa(ipa_for_respelling)
+    # Mechanically derived, never Claude-written -- see the module
+    # docstring and _generate_enrichment's docstring for why. When the
+    # dictionary already had an ipa, quick["respelling"] was already
+    # computed from it by get_word_info_quick and needs no rework here;
+    # only the rare need_ipa case (Claude just invented an ipa above)
+    # requires deriving a fresh respelling from that new ipa.
+    respelling = quick["respelling"] if not need_ipa else respell_from_ipa(data.get("ipa") or "")
     definition = _format_definition(data.get("definition") or quick["definition"])
 
     result: dict = {
@@ -821,6 +1061,7 @@ def get_word_example(word: str, sentence: str) -> dict:
     updated["definition"] = definition
     if need_ipa:
         updated["ipa"] = result["ipa"]
+        updated["respelling"] = respelling  # quick's own respelling was "" (no ipa yet) -- backfill it too
     _quick_cache[cache_key] = updated
 
     # ipa is a word-level fact (not sentence-dependent) -- backfill it

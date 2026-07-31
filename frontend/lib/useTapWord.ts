@@ -256,6 +256,16 @@ export function useTapWord() {
   // Shared by tapWord (tapping the word again) and advanceStage (clicking
   // the box itself) -- both mean the same thing once a word is already
   // active: move to the next stage, or retry if the last fetch failed.
+  // Declared before advanceOrRetry (which now calls it -- see the
+  // "already on the last stage" branch below) purely for read-order;
+  // JS closures don't actually require this, since advanceOrRetry's body
+  // only runs later, well after this has been assigned, but keeping the
+  // thing-that-gets-called-earlier physically earlier in the file avoids
+  // needing to explain that fact to the next person reading it.
+  const closeWord = useCallback(() => {
+    setActiveWord(null);
+  }, []);
+
   const advanceOrRetry = useCallback(
     (rawWordText: string, sentenceText: string) => {
       // A prior fetch for this word failed -- advancing should retry
@@ -275,13 +285,26 @@ export function useTapWord() {
         fetchExampleOnly(cleanWordText(rawWordText), sentenceText);
         return;
       }
+      // Already on the last stage with nothing left to retry -- another
+      // tap/space/arrow here means "I'm done with this word," not "sit
+      // here forever" (which is what the plain Math.min clamp below
+      // would otherwise do). Closes the card instead. The actual reading
+      // position (currentIndex in useReadingState) was never touched by
+      // any part of looking a word up -- tapping/advancing a word's card
+      // is entirely separate state -- so this just drops back to
+      // whatever was already being read, with nothing having silently
+      // advanced underneath the card.
+      if (stageIndex === stages.length - 1) {
+        closeWord();
+        return;
+      }
       setStageIndex((i) => {
         const next = Math.min(i + 1, stages.length - 1);
         if (stages[next] === "hearAloud" && next !== i) speak(wordInfo?.word ?? rawWordText);
         return next;
       });
     },
-    [wordInfo, isLoading, error, exampleError, stages, stageIndex, fetchWordInfo, fetchExampleOnly]
+    [wordInfo, isLoading, error, exampleError, stages, stageIndex, fetchWordInfo, fetchExampleOnly, closeWord]
   );
 
   const tapWord = useCallback(
@@ -308,10 +331,6 @@ export function useTapWord() {
     if (!activeWord) return;
     advanceOrRetry(activeWord.word, activeWord.sentenceText);
   }, [activeWord, advanceOrRetry]);
-
-  const closeWord = useCallback(() => {
-    setActiveWord(null);
-  }, []);
 
   const replayAudio = useCallback(() => {
     if (wordInfo) speak(wordInfo.word);

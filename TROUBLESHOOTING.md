@@ -48,6 +48,39 @@ prefix, which is the tell that you're one directory too deep. Either `cd`
 to the repo root before running git commands, or use `git add -A`, which
 stages the whole repo regardless of cwd.
 
+## A stale backend from an earlier run can silently outlive `./dev.sh`
+
+Ran into this directly while chasing the tap-word timeout bugs below: an
+earlier `./dev.sh` didn't fully shut down (a Ctrl+C that didn't reach
+every child process, a closed terminal, a crash), leaving its uvicorn
+process still bound to `:8000`. Every *later* `./dev.sh` run then failed
+to start its own backend (`[backend] ERROR: [Errno 48] Address already
+in use`), but that error was easy to miss buried inside interleaved
+`[backend]`/`[frontend]` output -- and even when noticed, nothing about
+it *looked* broken: the frontend still worked, `:8000` still answered
+requests. It just kept answering with the OLD process's code, no matter
+how many times the actual project files changed or `./dev.sh` was
+restarted.
+
+This produced a genuinely confusing debugging loop: two real backend
+fixes (see "Anthropic API connectivity" and the dictionary-lookup
+section below) kept appearing not to work, because they were never
+actually running -- every tap was still hitting the stale pre-fix
+process the whole time. `git status`/file contents looked correct,
+which made it look like the fixes themselves were wrong rather than
+just not-yet-loaded.
+
+**The tell:** `[Errno 48] Address already in use` in the `[backend]`
+startup output means a second process is already on that port -- find
+it with `lsof -nP -iTCP:8000 -sTCP:LISTEN` (swap the port for `:3000`
+to check the frontend too), kill it, then restart.
+
+**Fixed properly, not just documented:** `./dev.sh` now checks both
+`:8000` and `:3000` for anything already listening *before* starting
+anything, and kills it with a loud, hard-to-miss message if found --
+see `kill_stale_port` near the bottom of the script. A stale process
+from an earlier run can no longer silently survive into a new one.
+
 ## Anthropic API connectivity
 
 As of this writing: the backend fails with `anthropic.APIConnectionError:
@@ -61,3 +94,82 @@ network that does TLS inspection (school/corporate VPN, Zscaler-style
 proxy), `curl` (which trusts the OS keychain) can succeed while Python
 fails. **Update this section once it's actually resolved** with the real
 fix, so it's not lost.
+
+**Update:** the root cause above is still open -- this note is about a
+compounding bug that was found and fixed, not a fix for that root cause.
+`_get_anthropic_client()` in `word_info.py` was constructing `Anthropic()`
+with no `timeout`/`max_retries` override, so it ran on the SDK's defaults:
+`httpx.Timeout(timeout=10*60, connect=5.0)` and `max_retries=2` -- and
+each retry gets its own fresh timeout budget, so the real unbounded worst
+case was ~3 attempts x 10 minutes, not just 10. Since `/api/word-example`
+is a plain sync FastAPI route, a stalled call just blocked a worker
+thread for however long that took; the frontend's 15s `AbortController`
+(`useTapWord.ts`'s `FETCH_TIMEOUT_MS`) only stops the browser from
+waiting, it doesn't cancel the backend request. So any time this
+intermittent connectivity issue fired, tap-word could sit stalled for up
+to ~30 minutes on that one word instead of failing fast -- which is
+almost certainly what "tap-word takes forever / stalls out" reports were
+actually hitting, especially once real book text (archaic/dialectal
+vocabulary that `dictionaryapi.dev` mostly misses) pushed far more taps
+onto this Claude-dependent path than short demo passages ever did.
+
+Fixed by bounding the client to `connect=2.5s`/`5.0s` per phase and
+`max_retries=1` (~10.5s worst case, safely inside the frontend's 15s
+budget) in `_get_anthropic_client()`, and by adding `logger.warning(...)`
+calls around the `messages.create()` call in `_generate_enrichment` that
+distinguish a timeout vs. a connection error (logging `exc.__cause__`,
+where the real underlying `httpx`/`ssl` error would show up) vs. an
+API-level error. If the TLS-inspection theory above is right, the next
+time this fires it'll show up as a `[backend]`-prefixed warning with the
+real cause chain instead of a silent hang -- that's the next thing to
+check when this section can actually be closed out.
+
+## Dictionary lookups (`dictionaryapi.dev`) can also silently hang past their own timeout
+
+Same underlying category of problem as the Anthropic connectivity issue
+above, but on the dictionary leg this time, and worse in one way: it hit
+the FAST path. Reported symptom: tapping an ordinary word (e.g.
+"confidence") sat on "Looking it up..." for the full 15s until the
+frontend's own `AbortController` gave up and showed "...is taking too
+long" -- not slow, the backend genuinely never responded at all.
+
+`_fetch_dictionary_entry_exact` already passed `timeout=_DICTIONARY_TIMEOUT_S`
+(2.5s) to every `httpx.get(...)` call, so on paper this shouldn't have
+been possible. The gap: that timeout only bounds what httpx itself
+controls. DNS resolution goes through the stdlib's blocking
+`socket.getaddrinfo()`, which has no timeout parameter and isn't
+reliably interruptible -- on a network where that hangs (the same
+general "Python's HTTP stack behaves differently than curl" class of
+issue as the Anthropic case above, not necessarily the same exact
+cause), httpx's `timeout=` never gets a chance to fire because the
+request never got far enough to be inside httpx's own accounting.
+
+Fixed the same way as the Anthropic call: don't just trust the
+library's own timeout, enforce one from outside. `_fetch_dictionary_entry_exact`
+now submits the real lookup (renamed `_fetch_dictionary_entry_exact_uncapped`)
+to a small shared `ThreadPoolExecutor` and calls
+`future.result(timeout=_DICTIONARY_HARD_DEADLINE_S)` (3.5s -- a 1s
+buffer over the existing 2.5s httpx timeout, so that one gets first
+crack at firing normally). A deadline hit is logged and treated exactly
+like any other lookup miss (returns `None`), so both
+`fetch_dictionary_entry`'s parallel stemmed-candidate lookups and
+`analyze_morphology`'s sequential prefix/suffix checks get the
+protection automatically -- this is the one place both of them call
+through.
+
+**Known trade-off, not fully solved:** if the underlying call genuinely
+can't be interrupted (a true DNS hang, not just a slow response), its
+worker thread is stuck for the life of the backend process -- we can
+bound the *caller's* wait, not actually kill the hung syscall. The
+shared executor caps this at 16 workers; a caller is never blocked past
+the deadline even if all 16 are stuck (a queued-but-not-yet-started
+lookup still hits its own deadline), but if this network condition is
+truly persistent rather than intermittent, dictionary lookups could
+degrade to "always empty, but always fast" once enough workers leak,
+until the backend is restarted. That's a strictly better failure mode
+than the visible hang this fixes, but if lookups start feeling
+permanently empty rather than just occasionally-empty-but-fast, that's
+the next thing to check -- and the real fix at that point would be
+something that can actually cancel/bypass the OS-level DNS call (e.g. a
+custom resolver, or moving off blocking `getaddrinfo()` entirely) rather
+than just working around it.

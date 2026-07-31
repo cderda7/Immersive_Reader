@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { useReadingState, type AdvanceMode } from "@/lib/useReadingState";
 import { useTapWord } from "@/lib/useTapWord";
 import { ReadingPane } from "./ReadingPane";
@@ -24,6 +24,22 @@ const ADVANCE_MODE_LABEL: Record<AdvanceMode, string> = {
 export function ReadingScreen() {
   const state = useReadingState();
   const tapWord = useTapWord();
+
+  // Shared between ReadingPane (which starts the hold-to-define timer on
+  // Space/ArrowRight keydown) and WordInfoPopover (which uses the SAME
+  // keys to advance the card once one's open) -- tracks which of those
+  // two codes are physically down RIGHT NOW, independent of which
+  // component currently cares about them. This is what makes the
+  // handoff between the two work correctly: if the hold-to-define timer
+  // fires (opening a word) while the key is still physically held, the
+  // very next OS auto-repeat keydown arrives just after WordInfoPopover
+  // mounts -- without a SHARED tracker, its own guard would start fresh
+  // and empty, see that "new" keydown as a genuine first press, and
+  // immediately advance past pronunciation before the student's finger
+  // ever left the key. Passing the same ref to both means whichever one
+  // is listening at any given moment sees accurate physical key state,
+  // not a state that resets just because the DOM mounted a new listener.
+  const heldKeysRef = useRef<Set<string>>(new Set());
 
   // Drive the CSS variables the typography controls target, so the whole
   // layout scales from one source of truth instead of per-element styles.
@@ -71,6 +87,7 @@ export function ReadingScreen() {
           tapWordOpen={tapWord.isOpen}
           onSpace={state.advance}
           onRetreat={state.retreat}
+          heldKeysRef={heldKeysRef}
         />
         <BreathBanner active={state.isBreathError} />
         {tapWord.activeWord && (
@@ -84,6 +101,7 @@ export function ReadingScreen() {
             onClose={tapWord.closeWord}
             onAdvance={tapWord.advanceStage}
             onReplayAudio={tapWord.replayAudio}
+            heldKeysRef={heldKeysRef}
           />
         )}
       </div>

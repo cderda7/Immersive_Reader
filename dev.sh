@@ -36,6 +36,39 @@ if [ ! -f "$REPO_ROOT/backend/.env" ]; then
   echo ""
 fi
 
+# A stale process left over from an earlier run that didn't shut down
+# cleanly (a Ctrl+C that didn't reach every child, a terminal closed
+# mid-run, a crash) can end up still bound to :8000 or :3000. When that
+# happens, the fresh servers below either fail outright ("Address already
+# in use", easy to miss buried inside interleaved [backend]/[frontend]
+# output) or -- the genuinely dangerous case -- silently just... don't
+# start, while every request keeps hitting the OLD process from before,
+# running whatever code was loaded when IT started. That's exactly what
+# happened working on this project on 2026-07-31: multiple rounds of "the
+# fix isn't working" that were actually "you're not even running the
+# fix" (see TROUBLESHOOTING.md). Loudly clear the ports THIS script is
+# about to use before doing anything else, so that specific failure mode
+# can't happen silently again -- if you legitimately have something else
+# important running on 8000/3000, stop it before running this script.
+kill_stale_port() {
+  local port="$1"
+  if ! command -v lsof >/dev/null 2>&1; then
+    return 0
+  fi
+  local pids
+  pids="$(lsof -ti "tcp:$port" 2>/dev/null || true)"
+  if [ -n "$pids" ]; then
+    echo "*** Something was already listening on :$port (pid(s): $pids) ***"
+    echo "*** before this run even started -- almost certainly a leftover"
+    echo "*** process from an earlier ./dev.sh that didn't exit cleanly."
+    echo "*** Killing it now so you don't end up silently testing against it."
+    kill -9 $pids 2>/dev/null || true
+    sleep 0.5
+  fi
+}
+kill_stale_port 8000
+kill_stale_port 3000
+
 echo "Starting backend on :8000 and frontend on :3000 -- Ctrl+C stops both."
 echo ""
 
