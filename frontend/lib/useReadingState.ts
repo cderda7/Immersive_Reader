@@ -33,6 +33,47 @@ const BREATH_ERROR_TOTAL_MS = BREATH_ERROR_FADE_MS * 2 + BREATH_ERROR_HOLD_MS;
 type PauseKind = "paragraph" | "sentence" | null;
 type SentenceRef = { paragraphIdx: number; sentenceIdx: number } | null;
 
+// Which unit size the spacebar/click advances by, chosen from the
+// settings panel (ControlBar.tsx's "Advance by" group). Coarsest to
+// finest: paragraph -> sentence -> word -> syllable. Highlighting in
+// ReadingPane.tsx is gated off this same value, cumulatively from
+// paragraph down through whichever level is selected -- see that file's
+// tiersFor().
+export type AdvanceMode = "syllable" | "word" | "sentence" | "paragraph";
+
+// Finds the flat-list index of the START of the next unit at the given
+// granularity, scanning forward from currentIndex. Syllable mode is the
+// simple case (just the next array slot, wrapping at the end); the other
+// three modes scan for the next entry whose relevant *_idx differs from
+// the current one's -- which, because the flat list is sorted
+// (paragraph, sentence, word, syllable), is guaranteed to land exactly
+// on that next unit's first syllable, not somewhere in its middle.
+// Wraps to 0 (start of the passage) if nothing further differs, matching
+// syllable mode's modulo wraparound.
+function findNextIndex(syllables: Syllable[], currentIndex: number, mode: AdvanceMode): number {
+  if (mode === "syllable") return (currentIndex + 1) % Math.max(syllables.length, 1);
+  const current = syllables[currentIndex];
+  if (!current) return 0;
+  for (let i = currentIndex + 1; i < syllables.length; i++) {
+    if (unitDiffers(syllables[i], current, mode)) return i;
+  }
+  return 0;
+}
+
+// Whether `a` belongs to a different unit than `b` at the given
+// granularity. A paragraph change always counts as a difference
+// regardless of mode (paragraph is the coarsest unit, everything finer
+// lives inside it); word mode additionally requires the same
+// sentence_idx to match, matching sentence_idx/word_idx's existing
+// paragraph-relative-reset convention (see backend/syllabify.py).
+function unitDiffers(a: Syllable, b: Syllable, mode: AdvanceMode): boolean {
+  if (a.paragraph_idx !== b.paragraph_idx) return true;
+  if (mode === "paragraph") return false;
+  if (a.sentence_idx !== b.sentence_idx) return true;
+  if (mode === "sentence") return false;
+  return a.word_idx !== b.word_idx; // mode === "word"
+}
+
 export function useReadingState() {
   const [syllables, setSyllables] = useState<Syllable[]>(SAMPLE_SYLLABLES);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -74,6 +115,8 @@ export function useReadingState() {
   const [returnMode, setReturnMode] = useState(false);
   const [returnMsLeft, setReturnMsLeft] = useState(RETURN_MODE_MS);
   const returnDeadlineRef = useRef<number | null>(null);
+
+  const [advanceMode, setAdvanceMode] = useState<AdvanceMode>("syllable");
 
   const [textSize, setTextSize] = useState(18);
   const [letterSpacing, setLetterSpacing] = useState(0);
@@ -144,14 +187,22 @@ export function useReadingState() {
     // to already be on the next syllable, so instead of eating it silently
     // we interrupt with the breath-error sequence (paragraph pauses are
     // left alone -- no mismatch risk there, nothing to jump ahead of).
+    // BUT that mismatch story only makes sense in Syllable/Word mode,
+    // where a sentence-crossing pause is still the rare exception to an
+    // otherwise fine-grained pace. In Sentence/Paragraph mode, a
+    // sentence- or paragraph-type pause fires on literally EVERY step
+    // (see findNextIndex/unitDiffers below) -- it's not a desync anymore,
+    // it's just the mode's normal rhythm, so a rushed press there is
+    // plain impatience, not a mismatch. Treat it as the same silent
+    // no-op paragraph pauses already get in every mode.
     if (pauseKindRef.current) {
-      if (pauseKindRef.current === "sentence") {
+      if (pauseKindRef.current === "sentence" && (advanceMode === "syllable" || advanceMode === "word")) {
         triggerBreathError();
       }
       return;
     }
 
-    const nextIndex = (currentIndex + 1) % Math.max(syllables.length, 1);
+    const nextIndex = findNextIndex(syllables, currentIndex, advanceMode);
     const current = syllables[currentIndex];
     const next = syllables[nextIndex];
     const crossesParagraph = current && next && next.paragraph_idx !== current.paragraph_idx;
@@ -190,7 +241,7 @@ export function useReadingState() {
     // the guard above reads pauseKindRef instead specifically so this
     // callback doesn't need to be recreated (and re-propagated through a
     // render) just to pick up the latest pause status.
-  }, [currentIndex, syllables, triggerBreathError]);
+  }, [currentIndex, syllables, advanceMode, triggerBreathError]);
 
   const jumpToWord = useCallback(
     (paragraphIdx: number, wordIdx: number) => {
@@ -281,6 +332,8 @@ export function useReadingState() {
     enterReturnMode,
     exitReturnMode,
     handleWordClick,
+    advanceMode,
+    setAdvanceMode,
     textSize,
     setTextSize,
     letterSpacing,

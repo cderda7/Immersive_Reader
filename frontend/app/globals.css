@@ -133,22 +133,56 @@ body {
 .reading-paragraph--current {
   background: var(--tier-paragraph);
 }
+.reading-sentence {
+  /* Ancestor wrapper around one sentence's word spans (see
+     buildSentenceRuns/ReadingPane.tsx) -- carries the sentence-tier
+     color/background/transition inline, computed once per sentence
+     rather than once per word. Its background (when set) paints
+     continuously behind the transparent margin gaps between its
+     .reading-word children, which is what makes Sentence mode's tint
+     read as one fluid highlighted region instead of separate blocks
+     with visible seams at every space. Plain/untinted here (Word,
+     Syllable, Paragraph mode) this class carries no layout styles of
+     its own -- see .reading-sentence--tint below for the styling that
+     only applies when Sentence mode's tint is actually in play, so
+     other modes' spacing is untouched by this wrapper's mere
+     existence.
+  */
+}
+.reading-sentence--tint {
+  /* Padding + rounded corners give the fluid tint some visual breathing
+     room instead of hugging the text edge-to-edge. box-decoration-break
+     (+ -webkit- prefix, needed for Safari) is what makes those two
+     properties re-apply on EVERY line-fragment when a sentence wraps
+     across multiple lines, instead of the browser default ("slice") of
+     only applying padding/corners at the start and end of the whole
+     run -- that default look reads as one warped shape stretching
+     across lines; clone reads as a clean highlighter bar per line,
+     which is the "vertically connected across wraps" look Carson asked
+     for. */
+  border-radius: 4px;
+  padding: 2px 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 .reading-word {
   display: inline-block;
   padding: 1px 6px;
   border-radius: 4px;
   margin-right: 6px;
   cursor: default;
-  /* Sentence-level focus tier: no background of its own (that would be a
-     4th beige tint competing with the syllable/word/paragraph tiers
-     already locked in) -- text COLOR instead, black for the current
-     sentence and grey for others, never opacity-faded black pretending
-     to be grey. Color AND transition duration are set inline per-word by
-     ReadingPane.tsx (getWordFocus), not here -- the duration has to vary
-     (ambient fluid fade during normal reading vs. synced-to-the-pause
-     fade at a sentence boundary, see SENTENCE_PAUSE_MS in
-     useReadingState.ts), which a single static CSS rule can't express.
-     This class just carries the non-animated base layout styles.
+  /* Word-tint tier (.reading-word--current below) is the only styling
+     this class or its current-state modifier carry -- sentence-level
+     color/background/transition now live on the ancestor
+     .reading-sentence wrapper (see above and ReadingPane.tsx's
+     getWordFocus), computed once per sentence rather than once per
+     word, so a word span here never sets its own color or background
+     for that tier. Word/Syllable mode's sentence tier still reads as
+     text COLOR (current sentence black, others grey) via that
+     ancestor's inline style; Sentence mode's own tier instead reuses
+     --tier-word as a background across the ancestor, with text always
+     black; Paragraph mode sets neither. This class's job is just the
+     non-animated base layout (sizing/spacing) plus the word tint below.
   */
 }
 .reading-word--current {
@@ -350,6 +384,39 @@ body {
   color: var(--muted);
   min-width: 28px;
   text-align: center;
+}
+
+/* "Advance by" segmented control (ControlBar.tsx) -- same chrome as
+   .control-group (light bordered pill), but holding a row of toggleable
+   buttons instead of a stepper, matching .return-btn's active-state
+   pattern (solid tint, not just an outline) so the selected granularity
+   reads clearly at a glance. */
+.advance-mode-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  padding: 6px 10px;
+}
+.advance-mode-btn {
+  border: 1px solid var(--control-border);
+  background: #fff;
+  color: var(--muted);
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.advance-mode-btn:hover {
+  border-color: var(--tier-syllable);
+}
+.advance-mode-btn--active {
+  background: var(--tier-syllable);
+  color: var(--ink);
+  border-color: var(--tier-syllable);
+  font-weight: 600;
 }
 
 .return-btn {
