@@ -90,3 +90,53 @@ API-level error. If the TLS-inspection theory above is right, the next
 time this fires it'll show up as a `[backend]`-prefixed warning with the
 real cause chain instead of a silent hang -- that's the next thing to
 check when this section can actually be closed out.
+
+## Dictionary lookups (`dictionaryapi.dev`) can also silently hang past their own timeout
+
+Same underlying category of problem as the Anthropic connectivity issue
+above, but on the dictionary leg this time, and worse in one way: it hit
+the FAST path. Reported symptom: tapping an ordinary word (e.g.
+"confidence") sat on "Looking it up..." for the full 15s until the
+frontend's own `AbortController` gave up and showed "...is taking too
+long" -- not slow, the backend genuinely never responded at all.
+
+`_fetch_dictionary_entry_exact` already passed `timeout=_DICTIONARY_TIMEOUT_S`
+(2.5s) to every `httpx.get(...)` call, so on paper this shouldn't have
+been possible. The gap: that timeout only bounds what httpx itself
+controls. DNS resolution goes through the stdlib's blocking
+`socket.getaddrinfo()`, which has no timeout parameter and isn't
+reliably interruptible -- on a network where that hangs (the same
+general "Python's HTTP stack behaves differently than curl" class of
+issue as the Anthropic case above, not necessarily the same exact
+cause), httpx's `timeout=` never gets a chance to fire because the
+request never got far enough to be inside httpx's own accounting.
+
+Fixed the same way as the Anthropic call: don't just trust the
+library's own timeout, enforce one from outside. `_fetch_dictionary_entry_exact`
+now submits the real lookup (renamed `_fetch_dictionary_entry_exact_uncapped`)
+to a small shared `ThreadPoolExecutor` and calls
+`future.result(timeout=_DICTIONARY_HARD_DEADLINE_S)` (3.5s -- a 1s
+buffer over the existing 2.5s httpx timeout, so that one gets first
+crack at firing normally). A deadline hit is logged and treated exactly
+like any other lookup miss (returns `None`), so both
+`fetch_dictionary_entry`'s parallel stemmed-candidate lookups and
+`analyze_morphology`'s sequential prefix/suffix checks get the
+protection automatically -- this is the one place both of them call
+through.
+
+**Known trade-off, not fully solved:** if the underlying call genuinely
+can't be interrupted (a true DNS hang, not just a slow response), its
+worker thread is stuck for the life of the backend process -- we can
+bound the *caller's* wait, not actually kill the hung syscall. The
+shared executor caps this at 16 workers; a caller is never blocked past
+the deadline even if all 16 are stuck (a queued-but-not-yet-started
+lookup still hits its own deadline), but if this network condition is
+truly persistent rather than intermittent, dictionary lookups could
+degrade to "always empty, but always fast" once enough workers leak,
+until the backend is restarted. That's a strictly better failure mode
+than the visible hang this fixes, but if lookups start feeling
+permanently empty rather than just occasionally-empty-but-fast, that's
+the next thing to check -- and the real fix at that point would be
+something that can actually cancel/bypass the OS-level DNS call (e.g. a
+custom resolver, or moving off blocking `getaddrinfo()` entirely) rather
+than just working around it.

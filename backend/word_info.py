@@ -84,6 +84,7 @@ import os
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 
 import httpx
 from anthropic import Anthropic, APIConnectionError, APIStatusError, APITimeoutError
@@ -97,6 +98,42 @@ DICTIONARY_API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
 # fail fast into the Claude-only fallback rather than making a student
 # wait on the full 5s+ a more lenient timeout would allow.
 _DICTIONARY_TIMEOUT_S = 2.5
+
+# Belt-and-suspenders on top of _DICTIONARY_TIMEOUT_S above: httpx's own
+# `timeout=` kwarg is passed to every dictionaryapi.dev call, but it only
+# reliably bounds the parts of the request httpx itself controls. DNS
+# resolution goes through the stdlib's blocking socket.getaddrinfo(),
+# which has no timeout parameter of its own and isn't reliably
+# interruptible -- on some networks (school/corporate VPNs, broken IPv6
+# search-domain configs, the same general class of "curl works, Python
+# doesn't" issue TROUBLESHOOTING.md already documents for the Anthropic
+# leg) that lookup can hang well past whatever timeout= says, and httpx
+# has no way to enforce a limit on a syscall it doesn't control. A tap
+# on an ordinary word sitting on "Looking it up..." for the full 15s
+# frontend abort (see useTapWord.ts's FETCH_TIMEOUT_MS) with the backend
+# never responding at all -- not slow, literally silent -- is exactly
+# what that failure mode looks like from the outside.
+#
+# _fetch_dictionary_entry_exact wraps its real work in a dedicated
+# executor and enforces this as a hard wall-clock deadline from OUTSIDE,
+# the same "don't just trust the library's own timeout" principle
+# applied to the Anthropic client in _get_anthropic_client() above.
+# +1.0s over _DICTIONARY_TIMEOUT_S gives httpx's own timeout a full
+# chance to fire normally first; this is the backstop for when it can't.
+_DICTIONARY_HARD_DEADLINE_S = _DICTIONARY_TIMEOUT_S + 1.0
+
+# Shared across every dictionary call (both fetch_dictionary_entry's
+# parallel stemmed-candidate lookups and analyze_morphology's sequential
+# prefix/suffix root checks) rather than a fresh executor per call --
+# cheaper, and gives a natural cap on how many calls can be genuinely
+# stuck at once. If a call's underlying socket call truly can't be
+# interrupted, its worker thread is lost for the life of the process
+# either way; capping max_workers just bounds how many can leak before
+# new lookups start queuing behind them -- and a queued-but-not-yet-
+# started lookup still correctly hits its deadline via
+# Future.result(timeout=...) below, so a caller is never blocked longer
+# than _DICTIONARY_HARD_DEADLINE_S even under full exhaustion.
+_dictionary_executor = ThreadPoolExecutor(max_workers=16, thread_name_prefix="dict-lookup")
 
 # Same idea as syllabify.py's _WORD_RE: strip surrounding punctuation so
 # "hallucinate," or "(dog." look up cleanly. Unlike syllabify.py we don't
@@ -195,9 +232,12 @@ def _stem_candidates(word: str) -> list[str]:
 _MAX_DEFINITION_CANDIDATES = 10
 
 
-def _fetch_dictionary_entry_exact(word: str) -> dict | None:
-    """One lookup against dictionaryapi.dev for the exact string given --
-    no stemming. Returns
+def _fetch_dictionary_entry_exact_uncapped(word: str) -> dict | None:
+    """The actual dictionaryapi.dev lookup -- see
+    _fetch_dictionary_entry_exact (the public entry point every caller
+    should use instead) for why this is split out and wrapped with a
+    hard external deadline. One lookup for the exact string given -- no
+    stemming. Returns
     {"ipa": str | None, "definition": str | None, "definitions": [...]}
     on success, or None on a 404/network/parse failure. `definition` is
     just `definitions[0]["definition"]` for callers (e.g.
@@ -249,6 +289,33 @@ def _fetch_dictionary_entry_exact(word: str) -> dict | None:
         "definition": definitions[0]["definition"] if definitions else None,
         "definitions": definitions,
     }
+
+
+def _fetch_dictionary_entry_exact(word: str) -> dict | None:
+    """Public entry point every caller (fetch_dictionary_entry,
+    analyze_morphology) should use instead of the _uncapped version
+    above. Same signature and return contract, but enforces
+    _DICTIONARY_HARD_DEADLINE_S as a real wall-clock cap from OUTSIDE
+    the call, in case the underlying request hangs somewhere httpx's own
+    `timeout=` doesn't reach (see _DICTIONARY_HARD_DEADLINE_S's comment
+    -- DNS resolution is the prime suspect). A deadline hit is treated
+    exactly like any other lookup failure (returns None, same as a
+    404/network/parse error), just logged first so it's distinguishable
+    from an ordinary miss if this shows up in practice."""
+    future = _dictionary_executor.submit(_fetch_dictionary_entry_exact_uncapped, word)
+    try:
+        return future.result(timeout=_DICTIONARY_HARD_DEADLINE_S)
+    except FutureTimeoutError:
+        future.cancel()  # no-op if already running, but frees it if it was still queued
+        logger.warning(
+            "Dictionary lookup for %r exceeded the %.1fs hard deadline -- httpx's own %.1fs "
+            "timeout apparently didn't fire (likely a DNS/connect-level hang, not a slow "
+            "response). Treating as a miss.",
+            word,
+            _DICTIONARY_HARD_DEADLINE_S,
+            _DICTIONARY_TIMEOUT_S,
+        )
+        return None
 
 
 def fetch_dictionary_entry(word: str) -> dict | None:
