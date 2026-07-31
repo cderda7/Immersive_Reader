@@ -61,3 +61,32 @@ network that does TLS inspection (school/corporate VPN, Zscaler-style
 proxy), `curl` (which trusts the OS keychain) can succeed while Python
 fails. **Update this section once it's actually resolved** with the real
 fix, so it's not lost.
+
+**Update:** the root cause above is still open -- this note is about a
+compounding bug that was found and fixed, not a fix for that root cause.
+`_get_anthropic_client()` in `word_info.py` was constructing `Anthropic()`
+with no `timeout`/`max_retries` override, so it ran on the SDK's defaults:
+`httpx.Timeout(timeout=10*60, connect=5.0)` and `max_retries=2` -- and
+each retry gets its own fresh timeout budget, so the real unbounded worst
+case was ~3 attempts x 10 minutes, not just 10. Since `/api/word-example`
+is a plain sync FastAPI route, a stalled call just blocked a worker
+thread for however long that took; the frontend's 15s `AbortController`
+(`useTapWord.ts`'s `FETCH_TIMEOUT_MS`) only stops the browser from
+waiting, it doesn't cancel the backend request. So any time this
+intermittent connectivity issue fired, tap-word could sit stalled for up
+to ~30 minutes on that one word instead of failing fast -- which is
+almost certainly what "tap-word takes forever / stalls out" reports were
+actually hitting, especially once real book text (archaic/dialectal
+vocabulary that `dictionaryapi.dev` mostly misses) pushed far more taps
+onto this Claude-dependent path than short demo passages ever did.
+
+Fixed by bounding the client to `connect=2.5s`/`5.0s` per phase and
+`max_retries=1` (~10.5s worst case, safely inside the frontend's 15s
+budget) in `_get_anthropic_client()`, and by adding `logger.warning(...)`
+calls around the `messages.create()` call in `_generate_enrichment` that
+distinguish a timeout vs. a connection error (logging `exc.__cause__`,
+where the real underlying `httpx`/`ssl` error would show up) vs. an
+API-level error. If the TLS-inspection theory above is right, the next
+time this fires it'll show up as a `[backend]`-prefixed warning with the
+real cause chain instead of a silent hang -- that's the next thing to
+check when this section can actually be closed out.

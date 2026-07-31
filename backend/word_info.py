@@ -79,13 +79,16 @@ Split two ways:
      does -- see get_word_example's docstring.
 """
 
+import logging
 import os
 import re
 import unicodedata
 from concurrent.futures import ThreadPoolExecutor
 
 import httpx
-from anthropic import Anthropic
+from anthropic import Anthropic, APIConnectionError, APIStatusError, APITimeoutError
+
+logger = logging.getLogger(__name__)
 
 DICTIONARY_API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
 
@@ -128,11 +131,35 @@ def _get_anthropic_client() -> Anthropic:
     `LocalProtocolError: Illegal header value`, which the SDK then wraps
     in a generic APIConnectionError that gives no hint it was ever a key
     formatting problem rather than a real connectivity one.
+
+    timeout/max_retries are also overridden here rather than left at the
+    SDK's defaults (httpx.Timeout(timeout=10*60, connect=5.0),
+    max_retries=2) -- and critically, each retry gets its OWN fresh
+    timeout budget, so the unbounded worst case for one tap was really
+    ~3 attempts x 10 minutes, not just 10. A flaky leg to the Anthropic
+    API (see TROUBLESHOOTING.md's "Anthropic API connectivity" section)
+    could then pin a FastAPI worker thread for up to ~30 minutes on a
+    single word-example request, with the frontend's own 15s
+    AbortController (see useTapWord.ts's FETCH_TIMEOUT_MS) doing nothing
+    to stop it -- that abort only stops the browser from waiting, it
+    doesn't cancel this synchronous backend call. Bounded to
+    connect=2.5s (matching this file's own _DICTIONARY_TIMEOUT_S "fail
+    fast into the fallback" convention) and 5.0s for every other phase,
+    with max_retries=1 (one automatic retry for a transient blip,
+    without multiplying the worst case back up): 2 attempts x 5.0s + a
+    small jittered backoff is ~10.5s worst case, comfortably inside the
+    frontend's 15s budget so the backend's own specific 502 error
+    reaches the student before the browser's generic "taking too long"
+    fallback would even fire.
     """
     global _anthropic_client
     if _anthropic_client is None:
         api_key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
-        _anthropic_client = Anthropic(api_key=api_key)
+        _anthropic_client = Anthropic(
+            api_key=api_key,
+            timeout=httpx.Timeout(timeout=5.0, connect=2.5),
+            max_retries=1,
+        )
     return _anthropic_client
 
 
@@ -748,13 +775,41 @@ def _generate_enrichment(
         "Call the word_enrich tool."
     )
     client = _get_anthropic_client()
-    response = client.messages.create(
-        model="claude-haiku-4-5",
-        max_tokens=512,
-        tools=[_ENRICH_TOOL],
-        tool_choice={"type": "tool", "name": "word_enrich"},
-        messages=[{"role": "user", "content": prompt}],
-    )
+    # No timeout= override here -- this is the only call site that uses
+    # this client, so it inherits the bounded timeout/max_retries set
+    # once in _get_anthropic_client() above. If a second call site is
+    # ever added, decide explicitly whether it should share that budget
+    # rather than silently inheriting this comment's assumption.
+    #
+    # Logged (not just left to main.py's catch-all 502 handler) so a
+    # timeout vs. a connection error vs. an API-level error are
+    # distinguishable in dev.sh's [backend] output -- see
+    # TROUBLESHOOTING.md's "Anthropic API connectivity" section, which
+    # has an open question about *why* connections intermittently fail;
+    # this doesn't answer that, but it stops it from being a silent
+    # multi-minute hang with no diagnostic trail. Order matters:
+    # APITimeoutError is a SUBCLASS of APIConnectionError, so it must be
+    # caught first or it silently falls into the more generic branch.
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=512,
+            tools=[_ENRICH_TOOL],
+            tool_choice={"type": "tool", "name": "word_enrich"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except APITimeoutError as exc:
+        logger.warning("Anthropic call timed out for %r: %s", word, exc)
+        raise
+    except APIConnectionError as exc:
+        # exc.__cause__ is where the real underlying httpx/ssl error
+        # shows up -- e.g. exactly what TROUBLESHOOTING.md's suspected
+        # TLS-inspecting-proxy theory would need to confirm or rule out.
+        logger.warning("Anthropic connection error for %r: %s (cause=%r)", word, exc, exc.__cause__)
+        raise
+    except APIStatusError as exc:
+        logger.warning("Anthropic API error for %r: status=%s body=%s", word, exc.status_code, exc.message)
+        raise
     tool_use = next(b for b in response.content if b.type == "tool_use")
     return tool_use.input
 
