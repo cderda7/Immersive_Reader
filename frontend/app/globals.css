@@ -133,28 +133,56 @@ body {
 .reading-paragraph--current {
   background: var(--tier-paragraph);
 }
+.reading-sentence {
+  /* Ancestor wrapper around one sentence's word spans (see
+     buildSentenceRuns/ReadingPane.tsx) -- carries the sentence-tier
+     color/background/transition inline, computed once per sentence
+     rather than once per word. Its background (when set) paints
+     continuously behind the transparent margin gaps between its
+     .reading-word children, which is what makes Sentence mode's tint
+     read as one fluid highlighted region instead of separate blocks
+     with visible seams at every space. Plain/untinted here (Word,
+     Syllable, Paragraph mode) this class carries no layout styles of
+     its own -- see .reading-sentence--tint below for the styling that
+     only applies when Sentence mode's tint is actually in play, so
+     other modes' spacing is untouched by this wrapper's mere
+     existence.
+  */
+}
+.reading-sentence--tint {
+  /* Padding + rounded corners give the fluid tint some visual breathing
+     room instead of hugging the text edge-to-edge. box-decoration-break
+     (+ -webkit- prefix, needed for Safari) is what makes those two
+     properties re-apply on EVERY line-fragment when a sentence wraps
+     across multiple lines, instead of the browser default ("slice") of
+     only applying padding/corners at the start and end of the whole
+     run -- that default look reads as one warped shape stretching
+     across lines; clone reads as a clean highlighter bar per line,
+     which is the "vertically connected across wraps" look Carson asked
+     for. */
+  border-radius: 4px;
+  padding: 2px 4px;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
 .reading-word {
   display: inline-block;
   padding: 1px 6px;
   border-radius: 4px;
   margin-right: 6px;
   cursor: default;
-  /* Sentence-level focus tier has two different looks depending on
-     advance mode (see ReadingPane.tsx's SentenceTierStyle/tiersFor):
-     Word/Syllable mode use text COLOR (black for the current sentence,
-     grey for others, never opacity-faded black pretending to be grey) --
-     no background of their own there, since --tier-word is already
-     spent on the single current word/syllable. Sentence mode instead
-     keeps text permanently black and reuses that same --tier-word
-     background across every word in the current sentence (no finer
-     word-level tint competing for it in that mode). Paragraph mode sets
-     neither -- text stays black, no background. Color, background, AND
-     transition duration are all set inline per-word by ReadingPane.tsx
-     (getWordFocus), not here -- the duration has to vary (ambient fluid
-     fade during normal reading vs. synced-to-the-pause fade at a
-     sentence boundary, see SENTENCE_PAUSE_MS in useReadingState.ts),
-     which a single static CSS rule can't express. This class just
-     carries the non-animated base layout styles.
+  /* Word-tint tier (.reading-word--current below) is the only styling
+     this class or its current-state modifier carry -- sentence-level
+     color/background/transition now live on the ancestor
+     .reading-sentence wrapper (see above and ReadingPane.tsx's
+     getWordFocus), computed once per sentence rather than once per
+     word, so a word span here never sets its own color or background
+     for that tier. Word/Syllable mode's sentence tier still reads as
+     text COLOR (current sentence black, others grey) via that
+     ancestor's inline style; Sentence mode's own tier instead reuses
+     --tier-word as a background across the ancestor, with text always
+     black; Paragraph mode sets neither. This class's job is just the
+     non-animated base layout (sizing/spacing) plus the word tint below.
   */
 }
 .reading-word--current {

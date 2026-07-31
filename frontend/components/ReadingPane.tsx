@@ -48,6 +48,33 @@ function getSentenceText(words: Syllable[][], sentenceIdx: number): string {
     .join(" ");
 }
 
+// Groups a paragraph's words into contiguous runs sharing one sentence_idx,
+// so the render loop below can wrap each run in a single ancestor span
+// (see SentenceRun/.reading-sentence) instead of coloring/backgrounding
+// every word individually. That's what makes Sentence mode's highlight
+// read as one fluid region -- a shared ancestor's background paints
+// continuously behind the transparent margin gaps between its word-span
+// children, closing the "gap at every space" look that per-word
+// backgrounds had.
+interface SentenceRun {
+  sentenceIdx: number | undefined;
+  wordIndices: number[];
+}
+
+function buildSentenceRuns(words: Syllable[][]): SentenceRun[] {
+  const runs: SentenceRun[] = [];
+  words.forEach((sylList, wordIdx) => {
+    const sentenceIdx = sylList[0]?.sentence_idx;
+    const last = runs[runs.length - 1];
+    if (last && last.sentenceIdx === sentenceIdx) {
+      last.wordIndices.push(wordIdx);
+    } else {
+      runs.push({ sentenceIdx, wordIndices: [wordIdx] });
+    }
+  });
+  return runs;
+}
+
 // Text color -- see globals.css's note by .reading-word. Word/Syllable
 // mode's sentence tier still uses this (current sentence black, other
 // sentences in the paragraph grey); Sentence mode does not -- see
@@ -235,62 +262,76 @@ export function ReadingPane({
             key={paragraphIdx}
             className={`reading-paragraph${isCurrentParagraph ? " reading-paragraph--current" : ""}`}
           >
-            {words.map((sylList, wordIdx) => {
-              const isCurrentWord = isCurrentParagraph && current?.word_idx === wordIdx;
-
-              // All syllables in a word share one sentence_idx -- read it
-              // off the first.
-              const wordSentenceIdx = sylList[0]?.sentence_idx;
+            {buildSentenceRuns(words).map((run) => {
+              // One getWordFocus call per sentence run, not per word --
+              // its result is provably identical for every word sharing a
+              // sentence_idx, since none of its inputs vary at sub-sentence
+              // granularity. Color/background/transition all live on this
+              // run's wrapper span now; individual word spans below no
+              // longer set their own.
               const { color, background, transitionMs } = getWordFocus({
                 isActiveParagraph,
                 paragraphIdx,
-                wordSentenceIdx,
+                wordSentenceIdx: run.sentenceIdx,
                 currentSentenceIdx: current?.sentence_idx,
                 isSentencePause,
                 pendingSentence,
                 sentenceStyle: tiers.sentenceStyle,
               });
 
-              // isCurrentWord/isCurrentSyllable are computed unconditionally
-              // regardless of which tiers are active -- scroll-into-view
-              // (via currentRef, below) should keep tracking the reading
-              // position in every mode. Only the *visual* tint classes are
-              // gated behind tiers.word/tiers.syllable.
               return (
                 <span
-                  key={wordIdx}
-                  data-paragraph-idx={paragraphIdx}
-                  data-word-idx={wordIdx}
-                  data-sentence-idx={wordSentenceIdx}
-                  className={`reading-word${isCurrentWord && tiers.word ? " reading-word--current" : ""}${
-                    returnMode ? " reading-word--clickable" : " reading-word--tappable"
-                  }`}
+                  key={`sentence-${paragraphIdx}-${run.sentenceIdx ?? run.wordIndices[0]}`}
+                  className={`reading-sentence${tiers.sentenceStyle === "backgroundTint" ? " reading-sentence--tint" : ""}`}
                   style={{
                     color,
                     backgroundColor: background,
                     transition: `color ${transitionMs}ms ease-in-out, background-color ${transitionMs}ms ease-in-out`,
                   }}
-                  onClick={() => {
-                    if (returnMode) {
-                      onWordClick(paragraphIdx, wordIdx);
-                    } else if (wordSentenceIdx !== undefined) {
-                      const wordText = sylList.map((s) => s.text).join("");
-                      const sentenceText = getSentenceText(words, wordSentenceIdx);
-                      onWordTap(paragraphIdx, wordIdx, wordSentenceIdx, wordText, sentenceText);
-                    }
-                  }}
                 >
-                  {sylList.map((syl, syllableIdx) => {
-                    const isCurrentSyllable = isCurrentWord && current?.syllable_idx === syllableIdx;
+                  {run.wordIndices.map((wordIdx) => {
+                    const sylList = words[wordIdx];
+                    const isCurrentWord = isCurrentParagraph && current?.word_idx === wordIdx;
+
+                    // isCurrentWord/isCurrentSyllable are computed
+                    // unconditionally regardless of which tiers are active
+                    // -- scroll-into-view (via currentRef, below) should
+                    // keep tracking the reading position in every mode.
+                    // Only the *visual* tint classes are gated behind
+                    // tiers.word/tiers.syllable.
                     return (
                       <span
-                        key={syllableIdx}
-                        ref={isCurrentSyllable ? currentRef : undefined}
-                        className={`reading-syllable${
-                          isCurrentSyllable && tiers.syllable ? " reading-syllable--current" : ""
+                        key={wordIdx}
+                        data-paragraph-idx={paragraphIdx}
+                        data-word-idx={wordIdx}
+                        data-sentence-idx={run.sentenceIdx}
+                        className={`reading-word${isCurrentWord && tiers.word ? " reading-word--current" : ""}${
+                          returnMode ? " reading-word--clickable" : " reading-word--tappable"
                         }`}
+                        onClick={() => {
+                          if (returnMode) {
+                            onWordClick(paragraphIdx, wordIdx);
+                          } else if (run.sentenceIdx !== undefined) {
+                            const wordText = sylList.map((s) => s.text).join("");
+                            const sentenceText = getSentenceText(words, run.sentenceIdx);
+                            onWordTap(paragraphIdx, wordIdx, run.sentenceIdx, wordText, sentenceText);
+                          }
+                        }}
                       >
-                        {syl.text}
+                        {sylList.map((syl, syllableIdx) => {
+                          const isCurrentSyllable = isCurrentWord && current?.syllable_idx === syllableIdx;
+                          return (
+                            <span
+                              key={syllableIdx}
+                              ref={isCurrentSyllable ? currentRef : undefined}
+                              className={`reading-syllable${
+                                isCurrentSyllable && tiers.syllable ? " reading-syllable--current" : ""
+                              }`}
+                            >
+                              {syl.text}
+                            </span>
+                          );
+                        })}
                       </span>
                     );
                   })}
