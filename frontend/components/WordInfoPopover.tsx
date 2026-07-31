@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
 import type { ActiveWord, TapWordStage } from "@/lib/useTapWord";
 import type { WordInfo } from "@/lib/types";
 
@@ -17,6 +17,14 @@ interface WordInfoPopoverProps {
   onClose: () => void;
   onAdvance: () => void;
   onReplayAudio: () => void;
+  // Shared with ReadingPane -- see ReadingScreen's comment where this is
+  // created. NOT a local Set here on purpose: a fresh, empty Set at
+  // mount time would have no way to know Space/ArrowRight was already
+  // physically held from the SAME press that just opened this card via
+  // ReadingPane's hold-to-define timer, and the next OS auto-repeat
+  // event would then read as a genuine new press and skip straight past
+  // pronunciation before the student's finger ever left the key.
+  heldKeysRef: RefObject<Set<string>>;
 }
 
 const GAP_PX = 10;
@@ -46,6 +54,7 @@ export function WordInfoPopover({
   onClose,
   onAdvance,
   onReplayAudio,
+  heldKeysRef,
 }: WordInfoPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const [style, setStyle] = useState<{ bottom: number; left: number } | null>(null);
@@ -91,6 +100,42 @@ export function WordInfoPopover({
     setStyle({ bottom, left });
   }, [activeWord]);
 
+  // onAdvance gets a NEW identity on every stage advance -- advanceStage
+  // closes over advanceOrRetry (useTapWord.ts), which itself depends on
+  // stageIndex, so a fresh stageIndex means a fresh advanceOrRetry means
+  // a fresh advanceStage/onAdvance, every single time. The keydown effect
+  // below only depends on [activeWord, onClose], and activeWord
+  // deliberately stays the SAME object across stage advances (see the
+  // position effect's comment above -- that's what keeps the card from
+  // jumping). So that effect never re-runs mid-word, meaning a closure
+  // captured directly over `onAdvance` there would go stale after the
+  // very first press: specifically, it'd keep computing "advance" against
+  // whatever `stages` array existed the instant the word was tapped --
+  // often just ["pronunciation"] alone, since wordInfo is still null at
+  // that exact moment, before the fetch has resolved -- clamping every
+  // later press right back to stage 0 forever, no matter how many times
+  // it's pressed. A ref sidesteps that: always reads the CURRENT
+  // onAdvance without needing to re-bind (and thereby re-run the
+  // pointerdown/scroll listeners bundled in the same effect) on every
+  // single stage change.
+  const onAdvanceRef = useRef(onAdvance);
+  useEffect(() => {
+    onAdvanceRef.current = onAdvance;
+  }, [onAdvance]);
+
+  // heldKeysRef comes in as a prop now (shared with ReadingPane) rather
+  // than a local ref -- see this component's prop doc comment for why a
+  // fresh local Set here specifically broke the hold-to-define handoff.
+  // Tracks which of Space/ArrowRight are currently physically held down,
+  // so a sustained hold can only ever trigger ONE advance -- the next one
+  // requires a genuine keyup first, i.e. a real break between presses.
+  // Relying on the browser's own e.repeat flag alone would probably have
+  // covered the common case, but this is the more explicit, more
+  // robust version of the same idea: it doesn't matter WHY a second
+  // keydown arrived without a keyup in between (OS auto-repeat, or any
+  // other double-fire) -- if this code is already marked held, it's
+  // ignored outright.
+
   // Close on outside click/touch (anything that's not the popover itself
   // or the tapped word's own span -- re-tapping the same word is handled
   // by tapWord as a stage-advance, not a close) and on Escape.
@@ -103,7 +148,34 @@ export function WordInfoPopover({
       onClose();
     }
     function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      // Space/ArrowRight advance the card, mirroring the box's own
+      // onClick={onAdvance} below (same retry-on-error behavior and
+      // all -- see advanceOrRetry in useTapWord.ts). Safe to claim these
+      // keys globally while a word is active: ReadingPane's own
+      // Space/ArrowRight handling already no-ops whenever tapWordOpen is
+      // true (see its onKeyDown), specifically so the two don't compete
+      // for what these keys mean -- this is that other half.
+      //
+      // Skip it when focus is on an interactive element inside the card
+      // (the "Hear it again" button) -- Space there already has its own
+      // native meaning (activate the button), and this shouldn't hijack
+      // that or fire alongside it as a second, unintended action.
+      if (e.code === "Space" || e.code === "ArrowRight") {
+        if (e.target instanceof HTMLElement && e.target.closest("button")) return;
+        e.preventDefault();
+        if (heldKeysRef.current.has(e.code)) return; // still down from a previous keydown -- wait for keyup
+        heldKeysRef.current.add(e.code);
+        onAdvanceRef.current();
+      }
+    }
+    function handleKeyUp(e: KeyboardEvent) {
+      if (e.code === "Space" || e.code === "ArrowRight") {
+        heldKeysRef.current.delete(e.code);
+      }
     }
     // Closing on scroll rather than re-tracking position through it --
     // simplest way to avoid the card drifting stale relative to the text.
@@ -112,10 +184,12 @@ export function WordInfoPopover({
     }
     document.addEventListener("mousedown", handlePointerDown);
     document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("keyup", handleKeyUp);
     window.addEventListener("scroll", handleScroll, true);
     return () => {
       document.removeEventListener("mousedown", handlePointerDown);
       document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("keyup", handleKeyUp);
       window.removeEventListener("scroll", handleScroll, true);
     };
   }, [activeWord, onClose]);

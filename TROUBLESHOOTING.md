@@ -48,6 +48,39 @@ prefix, which is the tell that you're one directory too deep. Either `cd`
 to the repo root before running git commands, or use `git add -A`, which
 stages the whole repo regardless of cwd.
 
+## A stale backend from an earlier run can silently outlive `./dev.sh`
+
+Ran into this directly while chasing the tap-word timeout bugs below: an
+earlier `./dev.sh` didn't fully shut down (a Ctrl+C that didn't reach
+every child process, a closed terminal, a crash), leaving its uvicorn
+process still bound to `:8000`. Every *later* `./dev.sh` run then failed
+to start its own backend (`[backend] ERROR: [Errno 48] Address already
+in use`), but that error was easy to miss buried inside interleaved
+`[backend]`/`[frontend]` output -- and even when noticed, nothing about
+it *looked* broken: the frontend still worked, `:8000` still answered
+requests. It just kept answering with the OLD process's code, no matter
+how many times the actual project files changed or `./dev.sh` was
+restarted.
+
+This produced a genuinely confusing debugging loop: two real backend
+fixes (see "Anthropic API connectivity" and the dictionary-lookup
+section below) kept appearing not to work, because they were never
+actually running -- every tap was still hitting the stale pre-fix
+process the whole time. `git status`/file contents looked correct,
+which made it look like the fixes themselves were wrong rather than
+just not-yet-loaded.
+
+**The tell:** `[Errno 48] Address already in use` in the `[backend]`
+startup output means a second process is already on that port -- find
+it with `lsof -nP -iTCP:8000 -sTCP:LISTEN` (swap the port for `:3000`
+to check the frontend too), kill it, then restart.
+
+**Fixed properly, not just documented:** `./dev.sh` now checks both
+`:8000` and `:3000` for anything already listening *before* starting
+anything, and kills it with a loud, hard-to-miss message if found --
+see `kill_stale_port` near the bottom of the script. A stale process
+from an earlier run can no longer silently survive into a new one.
+
 ## Anthropic API connectivity
 
 As of this writing: the backend fails with `anthropic.APIConnectionError:
