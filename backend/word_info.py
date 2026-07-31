@@ -99,7 +99,16 @@ _DICTIONARY_TIMEOUT_S = 2.5
 # "hallucinate," or "(dog." look up cleanly. Unlike syllabify.py we don't
 # need to reattach the punctuation afterward -- this is a lookup key, not
 # something rendered back into the passage.
-_STRIP_RE = re.compile(r"^\W+|\W+$", re.UNICODE)
+#
+# Deliberately mirrors frontend/lib/useTapWord.ts's cleanWordText() rule
+# exactly (strip everything except letters/digits/apostrophe/hyphen, even
+# at the boundary) instead of a blanket \W+ strip -- a plain \W+ strip
+# would eat a leading/trailing apostrophe on words like "'tis" or
+# "Capulets'" (common in real book text), which the frontend's own
+# cleaning already preserves. If the two ever disagree, the tap-word card
+# can end up displaying a different word than the one actually looked up
+# -- keep this in lockstep with cleanWordText() if either changes.
+_STRIP_RE = re.compile(r"^[^\w'-]+|[^\w'-]+$", re.UNICODE)
 
 _anthropic_client: Anthropic | None = None
 

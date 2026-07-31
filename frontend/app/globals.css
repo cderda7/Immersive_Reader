@@ -299,6 +299,33 @@ body {
   background: #b8860b;
 }
 
+/* LibraryPicker.tsx -- the primary content-loading control, styled like
+   the existing .control-group chrome (light bordered pill) so it reads
+   as part of the same control-surface language as the settings bar
+   below, even though it sits up near the passage instead of down there. */
+.library-picker {
+  padding: 10px 28px;
+  border-bottom: 1px solid #e6e2d8;
+}
+.library-picker-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.library-picker-select {
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  padding: 6px 10px;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fff;
+  max-width: 320px;
+}
+.library-picker-select:disabled {
+  opacity: 0.5;
+}
+
 .passage-loader-wrap {
   padding: 0 28px 20px 28px;
 }

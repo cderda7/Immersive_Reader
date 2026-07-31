@@ -1,0 +1,16 @@
+{
+  "books": [
+    {
+      "slug": "moby-dick",
+      "title": "Moby Dick; or, The Whale",
+      "author": "Herman Melville",
+      "chapter_count": 135
+    },
+    {
+      "slug": "romeo-and-juliet",
+      "title": "Romeo and Juliet",
+      "author": "William Shakespeare",
+      "chapter_count": 24
+    }
+  ]
+}

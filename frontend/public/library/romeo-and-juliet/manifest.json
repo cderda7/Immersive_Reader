@@ -1,0 +1,127 @@
+{
+  "slug": "romeo-and-juliet",
+  "title": "Romeo and Juliet",
+  "author": "William Shakespeare",
+  "chapters": [
+    {
+      "id": "001",
+      "title": "ACT I, SCENE I. A public place.",
+      "word_count": 1985
+    },
+    {
+      "id": "002",
+      "title": "ACT I, SCENE II. A Street.",
+      "word_count": 853
+    },
+    {
+      "id": "003",
+      "title": "ACT I, SCENE III. Room in Capulet's House.",
+      "word_count": 948
+    },
+    {
+      "id": "004",
+      "title": "ACT I, SCENE IV. A Street.",
+      "word_count": 951
+    },
+    {
+      "id": "005",
+      "title": "ACT I, SCENE V. A Hall in Capulet's House.",
+      "word_count": 1385
+    },
+    {
+      "id": "006",
+      "title": "ACT II, SCENE I. An open place adjoining Capulet's Garden.",
+      "word_count": 377
+    },
+    {
+      "id": "007",
+      "title": "ACT II, SCENE II. Capulet's Garden.",
+      "word_count": 1652
+    },
+    {
+      "id": "008",
+      "title": "ACT II, SCENE III. Friar Lawrence's Cell.",
+      "word_count": 798
+    },
+    {
+      "id": "009",
+      "title": "ACT II, SCENE IV. A Street.",
+      "word_count": 1732
+    },
+    {
+      "id": "010",
+      "title": "ACT II, SCENE V. Capulet's Garden.",
+      "word_count": 705
+    },
+    {
+      "id": "011",
+      "title": "ACT II, SCENE VI. Friar Lawrence's Cell.",
+      "word_count": 318
+    },
+    {
+      "id": "012",
+      "title": "ACT III, SCENE I. A public Place.",
+      "word_count": 1697
+    },
+    {
+      "id": "013",
+      "title": "ACT III, SCENE II. A Room in Capulet's House.",
+      "word_count": 1170
+    },
+    {
+      "id": "014",
+      "title": "ACT III, SCENE III. Friar Lawrence's cell.",
+      "word_count": 1456
+    },
+    {
+      "id": "015",
+      "title": "ACT III, SCENE IV. A Room in Capulet's House.",
+      "word_count": 324
+    },
+    {
+      "id": "016",
+      "title": "ACT III, SCENE V. An open Gallery to Juliet's Chamber, overlooking the Garden.",
+      "word_count": 2114
+    },
+    {
+      "id": "017",
+      "title": "ACT IV, SCENE I. Friar Lawrence's Cell.",
+      "word_count": 1087
+    },
+    {
+      "id": "018",
+      "title": "ACT IV, SCENE II. Hall in Capulet's House.",
+      "word_count": 414
+    },
+    {
+      "id": "019",
+      "title": "ACT IV, SCENE III. Juliet's Chamber.",
+      "word_count": 501
+    },
+    {
+      "id": "020",
+      "title": "ACT IV, SCENE IV. Hall in Capulet's House.",
+      "word_count": 274
+    },
+    {
+      "id": "021",
+      "title": "ACT IV, SCENE V. Juliet's Chamber; Juliet on the bed.",
+      "word_count": 1188
+    },
+    {
+      "id": "022",
+      "title": "ACT V, SCENE I. Mantua. A Street.",
+      "word_count": 723
+    },
+    {
+      "id": "023",
+      "title": "ACT V, SCENE II. Friar Lawrence's Cell.",
+      "word_count": 255
+    },
+    {
+      "id": "024",
+      "title": "ACT V, SCENE III. A churchyard; in it a Monument belonging to the Capulets.",
+      "word_count": 2718
+    }
+  ]
+}
