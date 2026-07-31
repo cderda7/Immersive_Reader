@@ -11,12 +11,23 @@ sentence/word/syllable) is derived by comparing indices, with no
 tree-walking required. sentence_idx is paragraph-relative (resets to 0
 each paragraph), same convention as word_idx.
 
-SENTENCE SPLITTING is a plain punctuation heuristic (see
-_SENTENCE_SPLIT_RE below), not real sentence-boundary detection --
-abbreviations like "Dr. Smith" or "e.g. this" will incorrectly split into
-two "sentences". Same trade-off as the syllable overrides below: fine for
-hand-picked, spot-checked demo passages; a real risk against arbitrary
-teacher-pasted text.
+SENTENCE SPLITTING is a punctuation heuristic (see _split_sentences below),
+not real sentence-boundary detection. It specifically tolerates two cases
+that come up constantly in real book text: a short list of common
+abbreviations (Mr., Dr., e.g., etc. -- see _ABBREVIATIONS) doesn't trigger
+a split, and a closing quote/paren/bracket is allowed to sit between the
+terminal punctuation and the whitespace (so dialogue like `"Stop!" she
+said.` splits sensibly instead of the quote blocking the split entirely).
+It's still a heuristic, not a parser -- unusual punctuation or an
+abbreviation outside the hardcoded list can still mis-split.
+
+TEXT NORMALIZATION: real book text (e.g. Project Gutenberg downloads,
+copy-pasted from Word/Docs/Pages) commonly uses curly "smart" quotes/
+apostrophes and en/em dashes instead of the plain ASCII versions.
+_normalize_punctuation() maps these to straight equivalents once, up
+front, before any tokenizing happens -- so _WORD_RE below only ever has
+to handle plain ASCII punctuation, and doesn't need its own Unicode-quote
+handling.
 
 KNOWN LIMITATION: Pyphen's en_US dictionary is built from TeX/LibreOffice
 line-breaking patterns, not pronunciation data -- it finds typographically
@@ -123,12 +134,70 @@ SYLLABLE_OVERRIDES: dict[str, list[str]] = {
 
 # Split a token into (leading punctuation, core word, trailing punctuation),
 # e.g. "(dog." -> ("(", "dog", "."), so punctuation rides along with the
-# syllable it's attached to instead of getting syllabified itself.
+# syllable it's attached to instead of getting syllabified itself. Relies
+# on _normalize_punctuation() having already run -- this only recognizes
+# straight ASCII '/- as part of a word, not curly quotes.
 _WORD_RE = re.compile(r"^(\W*)([\w'-]*)(\W*)$", re.UNICODE)
 
-# Sentence boundary: ./!/? followed by whitespace. See docstring above for
-# the abbreviation caveat.
-_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+# Curly quotes/apostrophes and en/em dashes -> plain ASCII equivalents.
+# Applied once, up front (see _normalize_punctuation), not per-regex, so
+# every downstream pattern (_WORD_RE, _SENTENCE_BOUNDARY_RE) only ever
+# sees straight punctuation.
+_NORMALIZE_MAP = {
+    "‘": "'",  # ‘ left single quote
+    "’": "'",  # ’ right single quote / apostrophe
+    "‚": "'",  # ‚ low single quote
+    "“": '"',  # “ left double quote
+    "”": '"',  # ” right double quote
+    "„": '"',  # „ low double quote
+    # En/em dashes map to a SPACED hyphen, not a bare one -- found by
+    # spot-checking real ingested output: real prose commonly runs an
+    # em-dash with no surrounding spaces ("Some years ago—never mind
+    # how long precisely—having little money..."). Mapped to a bare
+    # "-" that reads identically to a real hyphenated compound word
+    # ("Sword-Fish"), so "ago" and "never" would silently glue into one
+    # fake "ago-never" token -- wrong, but not something the unparsed-
+    # token audit catches, since it still parses fine as a hyphenated
+    # word. An em-dash is always clause-separating punctuation, never a
+    # word-joiner, so it's forced apart from its neighbors here; a real
+    # hyphen (already plain ASCII, never touched by this map) keeps
+    # joining real compounds exactly as before.
+    "–": " - ",  # – en dash
+    "—": " - ",  # — em dash
+}
+_NORMALIZE_RE = re.compile("|".join(_NORMALIZE_MAP))
+
+# Found empirically running this against real Melville/Shakespeare text
+# (see backend/ingest_book.py's sanity report): a dash used mid-sentence
+# as an interruption/aside is very often glued directly to the PRECEDING
+# punctuation with no space at all -- e.g. "Diminish?-Will", "gale.-It's",
+# "thing;-no,". Whitespace-tokenizing (see syllabify() below) treats that
+# whole glued run as one "word", which _WORD_RE can't parse (it only
+# tolerates ONE run of leading punctuation and ONE run of trailing
+# punctuation, not punctuation-dash-word in the middle). Inserting a
+# space right after the punctuation, before the dash, splits it back
+# into two ordinary tokens (each independently parseable) without
+# touching a real mid-word hyphen like "Sword-Fish" (only preceded by a
+# letter, never by punctuation).
+_GLUED_DASH_RE = re.compile(r"(?<=[.,;:!?'\"()])-(?=\w)")
+
+# Sentence boundary: a run of ./!/? optionally followed by a closing
+# quote/paren/bracket, then whitespace -- captured as two groups (the
+# punctuation-plus-quote, then the whitespace) so _split_sentences can
+# decide, per candidate boundary, whether to actually split there (see
+# _ABBREVIATIONS below).
+_SENTENCE_BOUNDARY_RE = re.compile(r"([.!?]+['\"\)\]]*)(\s+)")
+
+# Common abbreviations that end in a period but don't end a sentence.
+# Checked against the token immediately before a candidate boundary (see
+# _ends_with_abbreviation) -- deliberately a short, hand-picked list
+# rather than an attempt at exhaustive coverage; same "good enough for
+# real prose, not a real NLP sentence splitter" trade-off as the rest of
+# this heuristic.
+_ABBREVIATIONS = {
+    "mr", "mrs", "ms", "dr", "st", "jr", "sr", "prof", "capt", "col",
+    "gen", "lt", "sgt", "rev", "vs", "etc", "e.g", "i.e",
+}
 
 
 @dataclass
@@ -142,11 +211,61 @@ class Syllable:
     is_last_in_word: bool
 
 
+def _normalize_punctuation(text: str) -> str:
+    """Map curly quotes/apostrophes and en/em dashes to their plain ASCII
+    equivalents, split a dash glued directly to preceding punctuation
+    (no space) into its own token, and drop Project Gutenberg's
+    underscore-wrapped italics markup (`_word_`, or `[_Aside._]` for a
+    stage direction -- both found in the real library texts). The
+    underscore itself is invisible formatting, not real punctuation, and
+    _WORD_RE treats it as a word character (\\w includes it) -- left in,
+    it silently breaks the leading-punctuation/core/trailing-punctuation
+    match for anything touching it (e.g. "monument._]" has a \\w char
+    AFTER punctuation has already started, which _WORD_RE can't
+    express). See module docstring -- this runs once, before any
+    tokenizing, so _WORD_RE and the sentence splitter below only ever
+    have to handle straight, cleanly-separated punctuation."""
+    text = _NORMALIZE_RE.sub(lambda m: _NORMALIZE_MAP[m.group(0)], text)
+    text = _GLUED_DASH_RE.sub(" -", text)
+    return text.replace("_", "")
+
+
+def _ends_with_abbreviation(fragment: str) -> bool:
+    """True if `fragment` (everything up to and including a candidate
+    sentence-boundary's punctuation) ends in a known abbreviation, e.g.
+    "...Dr." or "...i.e." -- checked against fragment's last whitespace-
+    delimited token, with its own leading/trailing punctuation stripped
+    off and lowercased."""
+    tokens = fragment.split()
+    if not tokens:
+        return False
+    last_token = tokens[-1].strip("'\"()[].!?").lower()
+    return last_token in _ABBREVIATIONS
+
+
 def _split_sentences(paragraph: str) -> list[str]:
-    """Split a paragraph into sentences. See module docstring for the
-    abbreviation-splitting limitation."""
-    sentences = [s.strip() for s in _SENTENCE_SPLIT_RE.split(paragraph.strip()) if s.strip()]
-    return sentences or [paragraph.strip()]
+    """Split a paragraph into sentences on terminal punctuation followed
+    by whitespace, tolerating a closing quote/paren/bracket in between
+    (so dialogue like `"Stop!" she said.` splits sensibly) and skipping
+    splits right after a common abbreviation (Mr., Dr., e.g., ...). Still
+    a heuristic, not real sentence-boundary detection -- see module
+    docstring."""
+    paragraph = paragraph.strip()
+    sentences: list[str] = []
+    pos = 0
+    for match in _SENTENCE_BOUNDARY_RE.finditer(paragraph):
+        boundary_end = match.end(1)
+        candidate = paragraph[pos:boundary_end]
+        if _ends_with_abbreviation(candidate):
+            continue
+        stripped = candidate.strip()
+        if stripped:
+            sentences.append(stripped)
+        pos = match.end()
+    tail = paragraph[pos:].strip()
+    if tail:
+        sentences.append(tail)
+    return sentences or [paragraph]
 
 
 def _apply_casing(template: str, override_part: str, is_first: bool) -> str:
@@ -173,6 +292,29 @@ def _syllabify_word(word: str) -> list[str]:
             for i, part in enumerate(override)
         ]
 
+    # A word with its OWN internal hyphen -- a real compound like
+    # "Sword-Fish" or "self-esteem", common in real prose -- can't be
+    # handed to Pyphen as one piece: dic.inserted() uses "-" as its own
+    # syllable-break marker, so the word's real hyphen collides with an
+    # inserted one (e.g. "Sword-Fish" -> "Sword--Fish"), and splitting
+    # on "-" then produces a stray EMPTY syllable at that spot -- which
+    # silently vanishes once rendered, turning "Sword-Fish" into
+    # "SwordFish". Split on the word's own hyphen(s) first, syllabify
+    # each side independently (neither side has an internal hyphen
+    # anymore, so there's nothing left to collide), then reattach the
+    # original hyphen to the end of the syllable before it.
+    if "-" in word:
+        sides = word.split("-")
+        parts: list[str] = []
+        for i, side in enumerate(sides):
+            side_parts = _syllabify_word(side) if side else [""]
+            if i == 0:
+                parts = list(side_parts)
+            else:
+                parts[-1] = parts[-1] + "-" + side_parts[0]
+                parts.extend(side_parts[1:])
+        return parts
+
     hyphenated = dic.inserted(word)
     parts = hyphenated.split("-")
     return parts if parts else [word]
@@ -184,8 +326,11 @@ def syllabify(passage: str) -> list[dict]:
     Paragraphs are split on blank lines; each paragraph is split into
     sentences; words within a sentence are split on whitespace. word_idx
     keeps counting across sentence boundaries (paragraph-relative, as
-    before) -- only sentence_idx resets per paragraph.
+    before) -- only sentence_idx resets per paragraph. Punctuation is
+    normalized to plain ASCII (see _normalize_punctuation) before any of
+    that happens.
     """
+    passage = _normalize_punctuation(passage)
     paragraphs = [p.strip() for p in re.split(r"\n\s*\n", passage.strip()) if p.strip()]
 
     flat: list[Syllable] = []
@@ -195,7 +340,13 @@ def syllabify(passage: str) -> list[dict]:
             for token in sentence.split():
                 match = _WORD_RE.match(token)
                 lead, core, trail = match.groups() if match else ("", token, "")
-                syl_parts = _syllabify_word(core) if core else [token]
+                # A punctuation-only token (e.g. a bare "--" standing on
+                # its own, common as a parenthetical dash in real prose)
+                # has an empty core -- lead+trail together already
+                # reconstruct the whole token, so the base here must be
+                # "", not `token` again, or the punctuation gets doubled
+                # once lead/trail are reattached below.
+                syl_parts = _syllabify_word(core) if core else [""]
 
                 # Reattach punctuation to the first/last syllable of the word.
                 if lead:

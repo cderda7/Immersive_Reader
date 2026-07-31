@@ -6,6 +6,7 @@ import { useTapWord } from "@/lib/useTapWord";
 import { ReadingPane } from "./ReadingPane";
 import { ReturnBanner } from "./ReturnBanner";
 import { ControlBar } from "./ControlBar";
+import { LibraryPicker } from "./LibraryPicker";
 import { PassageLoader } from "./PassageLoader";
 import { BreathBanner } from "./BreathBanner";
 import { WordInfoPopover } from "./WordInfoPopover";
@@ -48,6 +49,12 @@ export function ReadingScreen() {
         active={state.returnMode}
         msLeft={state.returnMsLeft}
         totalMs={state.returnModeMs}
+      />
+
+      <LibraryPicker
+        onLoadChapter={state.loadChapter}
+        isLoading={state.isLoading}
+        loadError={state.loadError}
       />
 
       <div className="reading-pane-wrap">

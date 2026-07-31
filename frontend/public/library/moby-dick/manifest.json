@@ -1,0 +1,682 @@
+{
+  "slug": "moby-dick",
+  "title": "Moby Dick; or, The Whale",
+  "author": "Herman Melville",
+  "chapters": [
+    {
+      "id": "001",
+      "title": "CHAPTER 1. Loomings.",
+      "word_count": 2247
+    },
+    {
+      "id": "002",
+      "title": "CHAPTER 2. The Carpet-Bag.",
+      "word_count": 1456
+    },
+    {
+      "id": "003",
+      "title": "CHAPTER 3. The Spouter-Inn.",
+      "word_count": 5915
+    },
+    {
+      "id": "004",
+      "title": "CHAPTER 4. The Counterpane.",
+      "word_count": 1682
+    },
+    {
+      "id": "005",
+      "title": "CHAPTER 5. Breakfast.",
+      "word_count": 751
+    },
+    {
+      "id": "006",
+      "title": "CHAPTER 6. The Street.",
+      "word_count": 818
+    },
+    {
+      "id": "007",
+      "title": "CHAPTER 7. The Chapel.",
+      "word_count": 951
+    },
+    {
+      "id": "008",
+      "title": "CHAPTER 8. The Pulpit.",
+      "word_count": 955
+    },
+    {
+      "id": "009",
+      "title": "CHAPTER 9. The Sermon.",
+      "word_count": 3621
+    },
+    {
+      "id": "010",
+      "title": "CHAPTER 10. A Bosom Friend.",
+      "word_count": 1575
+    },
+    {
+      "id": "011",
+      "title": "CHAPTER 11. Nightgown.",
+      "word_count": 724
+    },
+    {
+      "id": "012",
+      "title": "CHAPTER 12. Biographical.",
+      "word_count": 888
+    },
+    {
+      "id": "013",
+      "title": "CHAPTER 13. Wheelbarrow.",
+      "word_count": 1720
+    },
+    {
+      "id": "014",
+      "title": "CHAPTER 14. Nantucket.",
+      "word_count": 759
+    },
+    {
+      "id": "015",
+      "title": "CHAPTER 15. Chowder.",
+      "word_count": 1189
+    },
+    {
+      "id": "016",
+      "title": "CHAPTER 16. The Ship.",
+      "word_count": 5540
+    },
+    {
+      "id": "017",
+      "title": "CHAPTER 17. The Ramadan.",
+      "word_count": 2305
+    },
+    {
+      "id": "018",
+      "title": "CHAPTER 18. His Mark.",
+      "word_count": 1364
+    },
+    {
+      "id": "019",
+      "title": "CHAPTER 19. The Prophet.",
+      "word_count": 1223
+    },
+    {
+      "id": "020",
+      "title": "CHAPTER 20. All Astir.",
+      "word_count": 925
+    },
+    {
+      "id": "021",
+      "title": "CHAPTER 21. Going Aboard.",
+      "word_count": 1078
+    },
+    {
+      "id": "022",
+      "title": "CHAPTER 22. Merry Christmas.",
+      "word_count": 1671
+    },
+    {
+      "id": "023",
+      "title": "CHAPTER 23. The Lee Shore.",
+      "word_count": 368
+    },
+    {
+      "id": "024",
+      "title": "CHAPTER 24. The Advocate.",
+      "word_count": 1653
+    },
+    {
+      "id": "025",
+      "title": "CHAPTER 25. Postscript.",
+      "word_count": 286
+    },
+    {
+      "id": "026",
+      "title": "CHAPTER 26. Knights and Squires.",
+      "word_count": 1221
+    },
+    {
+      "id": "027",
+      "title": "CHAPTER 27. Knights and Squires.",
+      "word_count": 1677
+    },
+    {
+      "id": "028",
+      "title": "CHAPTER 28. Ahab.",
+      "word_count": 1408
+    },
+    {
+      "id": "029",
+      "title": "CHAPTER 29. Enter Ahab; to Him, Stubb.",
+      "word_count": 1211
+    },
+    {
+      "id": "030",
+      "title": "CHAPTER 30. The Pipe.",
+      "word_count": 295
+    },
+    {
+      "id": "031",
+      "title": "CHAPTER 31. Queen Mab.",
+      "word_count": 876
+    },
+    {
+      "id": "032",
+      "title": "CHAPTER 32. Cetology.",
+      "word_count": 5176
+    },
+    {
+      "id": "033",
+      "title": "CHAPTER 33. The Specksnyder.",
+      "word_count": 968
+    },
+    {
+      "id": "034",
+      "title": "CHAPTER 34. The Cabin-Table.",
+      "word_count": 2197
+    },
+    {
+      "id": "035",
+      "title": "CHAPTER 35. The Mast-Head.",
+      "word_count": 2546
+    },
+    {
+      "id": "036",
+      "title": "CHAPTER 36. The Quarter-Deck.",
+      "word_count": 2829
+    },
+    {
+      "id": "037",
+      "title": "CHAPTER 37. Sunset.",
+      "word_count": 519
+    },
+    {
+      "id": "038",
+      "title": "CHAPTER 38. Dusk.",
+      "word_count": 399
+    },
+    {
+      "id": "039",
+      "title": "CHAPTER 39. First Night-Watch.",
+      "word_count": 281
+    },
+    {
+      "id": "040",
+      "title": "CHAPTER 40. Midnight, Forecastle.",
+      "word_count": 1576
+    },
+    {
+      "id": "041",
+      "title": "CHAPTER 41. Moby Dick.",
+      "word_count": 3789
+    },
+    {
+      "id": "042",
+      "title": "CHAPTER 42. The Whiteness of the Whale.",
+      "word_count": 3642
+    },
+    {
+      "id": "043",
+      "title": "CHAPTER 43. Hark!",
+      "word_count": 312
+    },
+    {
+      "id": "044",
+      "title": "CHAPTER 44. The Chart.",
+      "word_count": 2035
+    },
+    {
+      "id": "045",
+      "title": "CHAPTER 45. The Affidavit.",
+      "word_count": 3563
+    },
+    {
+      "id": "046",
+      "title": "CHAPTER 46. Surmises.",
+      "word_count": 1000
+    },
+    {
+      "id": "047",
+      "title": "CHAPTER 47. The Mat-Maker.",
+      "word_count": 930
+    },
+    {
+      "id": "048",
+      "title": "CHAPTER 48. The First Lowering.",
+      "word_count": 3980
+    },
+    {
+      "id": "049",
+      "title": "CHAPTER 49. The Hyena.",
+      "word_count": 836
+    },
+    {
+      "id": "050",
+      "title": "CHAPTER 50. Ahab's Boat and Crew. Fedallah.",
+      "word_count": 1011
+    },
+    {
+      "id": "051",
+      "title": "CHAPTER 51. The Spirit-Spout.",
+      "word_count": 1506
+    },
+    {
+      "id": "052",
+      "title": "CHAPTER 52. The Albatross.",
+      "word_count": 723
+    },
+    {
+      "id": "053",
+      "title": "CHAPTER 53. The Gam.",
+      "word_count": 1623
+    },
+    {
+      "id": "054",
+      "title": "CHAPTER 54. The Town-Ho's Story.",
+      "word_count": 8012
+    },
+    {
+      "id": "055",
+      "title": "CHAPTER 55. Of the Monstrous Pictures of Whales.",
+      "word_count": 1888
+    },
+    {
+      "id": "056",
+      "title": "CHAPTER 56. Of the Less Erroneous Pictures of Whales, and the True",
+      "word_count": 1306
+    },
+    {
+      "id": "057",
+      "title": "CHAPTER 57. Of Whales in Paint; in Teeth; in Wood; in Sheet-Iron; in",
+      "word_count": 944
+    },
+    {
+      "id": "058",
+      "title": "CHAPTER 58. Brit.",
+      "word_count": 1009
+    },
+    {
+      "id": "059",
+      "title": "CHAPTER 59. Squid.",
+      "word_count": 924
+    },
+    {
+      "id": "060",
+      "title": "CHAPTER 60. The Line.",
+      "word_count": 1468
+    },
+    {
+      "id": "061",
+      "title": "CHAPTER 61. Stubb Kills a Whale.",
+      "word_count": 1980
+    },
+    {
+      "id": "062",
+      "title": "CHAPTER 62. The Dart.",
+      "word_count": 572
+    },
+    {
+      "id": "063",
+      "title": "CHAPTER 63. The Crotch.",
+      "word_count": 476
+    },
+    {
+      "id": "064",
+      "title": "CHAPTER 64. Stubb's Supper.",
+      "word_count": 3001
+    },
+    {
+      "id": "065",
+      "title": "CHAPTER 65. The Whale as a Dish.",
+      "word_count": 991
+    },
+    {
+      "id": "066",
+      "title": "CHAPTER 66. The Shark Massacre.",
+      "word_count": 630
+    },
+    {
+      "id": "067",
+      "title": "CHAPTER 67. Cutting In.",
+      "word_count": 733
+    },
+    {
+      "id": "068",
+      "title": "CHAPTER 68. The Blanket.",
+      "word_count": 1201
+    },
+    {
+      "id": "069",
+      "title": "CHAPTER 69. The Funeral.",
+      "word_count": 435
+    },
+    {
+      "id": "070",
+      "title": "CHAPTER 70. The Sphynx.",
+      "word_count": 877
+    },
+    {
+      "id": "071",
+      "title": "CHAPTER 71. The Jeroboam's Story.",
+      "word_count": 2272
+    },
+    {
+      "id": "072",
+      "title": "CHAPTER 72. The Monkey-Rope.",
+      "word_count": 1657
+    },
+    {
+      "id": "073",
+      "title": "CHAPTER 73. Stubb and Flask kill a Right Whale; and Then Have a Talk",
+      "word_count": 2183
+    },
+    {
+      "id": "074",
+      "title": "CHAPTER 74. The Sperm Whale's Head - Contrasted View.",
+      "word_count": 1648
+    },
+    {
+      "id": "075",
+      "title": "CHAPTER 75. The Right Whale's Head - Contrasted View.",
+      "word_count": 1231
+    },
+    {
+      "id": "076",
+      "title": "CHAPTER 76. The Battering-Ram.",
+      "word_count": 875
+    },
+    {
+      "id": "077",
+      "title": "CHAPTER 77. The Great Heidelburgh Tun.",
+      "word_count": 644
+    },
+    {
+      "id": "078",
+      "title": "CHAPTER 78. Cistern and Buckets.",
+      "word_count": 1663
+    },
+    {
+      "id": "079",
+      "title": "CHAPTER 79. The Prairie.",
+      "word_count": 933
+    },
+    {
+      "id": "080",
+      "title": "CHAPTER 80. The Nut.",
+      "word_count": 910
+    },
+    {
+      "id": "081",
+      "title": "CHAPTER 81. The Pequod Meets The Virgin.",
+      "word_count": 4371
+    },
+    {
+      "id": "082",
+      "title": "CHAPTER 82. The Honor and Glory of Whaling.",
+      "word_count": 1158
+    },
+    {
+      "id": "083",
+      "title": "CHAPTER 83. Jonah Historically Regarded.",
+      "word_count": 783
+    },
+    {
+      "id": "084",
+      "title": "CHAPTER 84. Pitchpoling.",
+      "word_count": 807
+    },
+    {
+      "id": "085",
+      "title": "CHAPTER 85. The Fountain.",
+      "word_count": 2078
+    },
+    {
+      "id": "086",
+      "title": "CHAPTER 86. The Tail.",
+      "word_count": 1851
+    },
+    {
+      "id": "087",
+      "title": "CHAPTER 87. The Grand Armada.",
+      "word_count": 4771
+    },
+    {
+      "id": "088",
+      "title": "CHAPTER 88. Schools and Schoolmasters.",
+      "word_count": 1193
+    },
+    {
+      "id": "089",
+      "title": "CHAPTER 89. Fast-Fish and Loose-Fish.",
+      "word_count": 1403
+    },
+    {
+      "id": "090",
+      "title": "CHAPTER 90. Heads or Tails.",
+      "word_count": 1054
+    },
+    {
+      "id": "091",
+      "title": "CHAPTER 91. The Pequod Meets The Rose-Bud.",
+      "word_count": 2504
+    },
+    {
+      "id": "092",
+      "title": "CHAPTER 92. Ambergris.",
+      "word_count": 969
+    },
+    {
+      "id": "093",
+      "title": "CHAPTER 93. The Castaway.",
+      "word_count": 1604
+    },
+    {
+      "id": "094",
+      "title": "CHAPTER 94. A Squeeze of the Hand.",
+      "word_count": 1272
+    },
+    {
+      "id": "095",
+      "title": "CHAPTER 95. The Cassock.",
+      "word_count": 500
+    },
+    {
+      "id": "096",
+      "title": "CHAPTER 96. The Try-Works.",
+      "word_count": 1821
+    },
+    {
+      "id": "097",
+      "title": "CHAPTER 97. The Lamp.",
+      "word_count": 246
+    },
+    {
+      "id": "098",
+      "title": "CHAPTER 98. Stowing Down and Clearing Up.",
+      "word_count": 1029
+    },
+    {
+      "id": "099",
+      "title": "CHAPTER 99. The Doubloon.",
+      "word_count": 2455
+    },
+    {
+      "id": "100",
+      "title": "CHAPTER 100. Leg and Arm.",
+      "word_count": 2768
+    },
+    {
+      "id": "101",
+      "title": "CHAPTER 101. The Decanter.",
+      "word_count": 1779
+    },
+    {
+      "id": "102",
+      "title": "CHAPTER 102. A Bower in the Arsacides.",
+      "word_count": 1567
+    },
+    {
+      "id": "103",
+      "title": "CHAPTER 103. Measurement of The Whale's Skeleton.",
+      "word_count": 922
+    },
+    {
+      "id": "104",
+      "title": "CHAPTER 104. The Fossil Whale.",
+      "word_count": 1420
+    },
+    {
+      "id": "105",
+      "title": "CHAPTER 105. Does the Whale's Magnitude Diminish? - Will He Perish?",
+      "word_count": 1559
+    },
+    {
+      "id": "106",
+      "title": "CHAPTER 106. Ahab's Leg.",
+      "word_count": 928
+    },
+    {
+      "id": "107",
+      "title": "CHAPTER 107. The Carpenter.",
+      "word_count": 1042
+    },
+    {
+      "id": "108",
+      "title": "CHAPTER 108. Ahab and the Carpenter.",
+      "word_count": 1595
+    },
+    {
+      "id": "109",
+      "title": "CHAPTER 109. Ahab and Starbuck in the Cabin.",
+      "word_count": 918
+    },
+    {
+      "id": "110",
+      "title": "CHAPTER 110. Queequeg in His Coffin.",
+      "word_count": 2257
+    },
+    {
+      "id": "111",
+      "title": "CHAPTER 111. The Pacific.",
+      "word_count": 419
+    },
+    {
+      "id": "112",
+      "title": "CHAPTER 112. The Blacksmith.",
+      "word_count": 930
+    },
+    {
+      "id": "113",
+      "title": "CHAPTER 113. The Forge.",
+      "word_count": 1236
+    },
+    {
+      "id": "114",
+      "title": "CHAPTER 114. The Gilder.",
+      "word_count": 646
+    },
+    {
+      "id": "115",
+      "title": "CHAPTER 115. The Pequod Meets The Bachelor.",
+      "word_count": 881
+    },
+    {
+      "id": "116",
+      "title": "CHAPTER 116. The Dying Whale.",
+      "word_count": 522
+    },
+    {
+      "id": "117",
+      "title": "CHAPTER 117. The Whale Watch.",
+      "word_count": 481
+    },
+    {
+      "id": "118",
+      "title": "CHAPTER 118. The Quadrant.",
+      "word_count": 897
+    },
+    {
+      "id": "119",
+      "title": "CHAPTER 119. The Candles.",
+      "word_count": 2541
+    },
+    {
+      "id": "120",
+      "title": "CHAPTER 120. The Deck Towards the End of the First Night Watch.",
+      "word_count": 185
+    },
+    {
+      "id": "121",
+      "title": "CHAPTER 121. Midnight. - The Forecastle Bulwarks.",
+      "word_count": 625
+    },
+    {
+      "id": "122",
+      "title": "CHAPTER 122. Midnight Aloft. - Thunder and Lightning.",
+      "word_count": 54
+    },
+    {
+      "id": "123",
+      "title": "CHAPTER 123. The Musket.",
+      "word_count": 1269
+    },
+    {
+      "id": "124",
+      "title": "CHAPTER 124. The Needle.",
+      "word_count": 1209
+    },
+    {
+      "id": "125",
+      "title": "CHAPTER 125. The Log and Line.",
+      "word_count": 1107
+    },
+    {
+      "id": "126",
+      "title": "CHAPTER 126. The Life-Buoy.",
+      "word_count": 1383
+    },
+    {
+      "id": "127",
+      "title": "CHAPTER 127. The Deck.",
+      "word_count": 716
+    },
+    {
+      "id": "128",
+      "title": "CHAPTER 128. The Pequod Meets The Rachel.",
+      "word_count": 1436
+    },
+    {
+      "id": "129",
+      "title": "CHAPTER 129. The Cabin.",
+      "word_count": 594
+    },
+    {
+      "id": "130",
+      "title": "CHAPTER 130. The Hat.",
+      "word_count": 1716
+    },
+    {
+      "id": "131",
+      "title": "CHAPTER 131. The Pequod Meets The Delight.",
+      "word_count": 440
+    },
+    {
+      "id": "132",
+      "title": "CHAPTER 132. The Symphony.",
+      "word_count": 1645
+    },
+    {
+      "id": "133",
+      "title": "CHAPTER 133. The Chase - First Day.",
+      "word_count": 3586
+    },
+    {
+      "id": "134",
+      "title": "CHAPTER 134. The Chase - Second Day.",
+      "word_count": 3417
+    },
+    {
+      "id": "135",
+      "title": "CHAPTER 135. The Chase. - Third Day.",
+      "word_count": 4864
+    }
+  ]
+}
