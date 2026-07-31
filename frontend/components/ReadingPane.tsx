@@ -10,6 +10,18 @@ import { SENTENCE_PAUSE_MS, type AdvanceMode } from "@/lib/useReadingState";
 // slower than SENTENCE_PAUSE_MS.
 const AMBIENT_FADE_MS = 700;
 
+// How long Space/ArrowRight must be held before it opens tap-to-define for
+// the word currently being read, instead of advancing. A genuine tap --
+// press and release -- is comfortably under this on any normal keyboard,
+// so the two gestures don't compete: onKeyDown starts this timer instead
+// of advancing immediately, and onKeyUp either cancels it (fast release --
+// treat as a normal advance) or, if the timer already fired, treats the
+// release as consuming that hold instead of triggering a second action.
+// Self-timed rather than keyed off the OS's key-repeat rate (which varies
+// by system and is usually much slower than this anyway) -- see the
+// e.repeat guard in onKeyDown below.
+const HOLD_TO_DEFINE_MS = 200;
+
 interface PendingSentence {
   paragraphIdx: number;
   sentenceIdx: number;
@@ -215,6 +227,41 @@ export function ReadingPane({
     currentRef.current?.scrollIntoView({ block: "nearest" });
   }, [currentIndex]);
 
+  // Tracks the in-flight hold-to-define timer (see HOLD_TO_DEFINE_MS
+  // above) and whether the current press has already been consumed by a
+  // fired hold, so the matching keyup knows not to also treat it as a tap.
+  const holdTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const holdConsumedRef = useRef(false);
+
+  // Opens tap-to-define for whichever word is currently being read,
+  // resolved the exact same way a real click on that word span would --
+  // same wordText/sentenceText reconstruction, just driven by the hold
+  // timer instead of a mouse event. Reads `current`/`grouped` from this
+  // render's closure, which is accurate for the whole hold window since
+  // nothing moves currentIndex while Space/ArrowRight is being held down.
+  function openDefinitionForCurrentWord() {
+    if (!current) return;
+    const words = grouped[current.paragraph_idx];
+    if (!words) return;
+    const sylList = words[current.word_idx];
+    if (!sylList) return;
+
+    const wordText = sylList.map((s) => s.text).join("");
+    const sentenceText = getSentenceText(words, current.sentence_idx);
+    onWordTap(current.paragraph_idx, current.word_idx, current.sentence_idx, wordText, sentenceText);
+  }
+
+  // Clear any pending hold-to-define timer on unmount so it can't fire
+  // (and call onWordTap) after the component's gone.
+  useEffect(() => {
+    return () => {
+      if (holdTimeoutRef.current) {
+        clearTimeout(holdTimeoutRef.current);
+        holdTimeoutRef.current = null;
+      }
+    };
+  }, []);
+
   // Auto-focus the pane on mount so Space advances immediately after a
   // page load/refresh. Without this, keyboard focus defaults to <body>,
   // and the onKeyDown handler below (which only fires on this element)
@@ -238,28 +285,58 @@ export function ReadingPane({
         lineHeight: "var(--reading-line-height)",
       }}
       onKeyDown={(e) => {
-        // Space and ArrowRight both advance (same handler, same
-        // semantics -- ArrowRight is just an alternate binding for the
-        // same action). ArrowLeft retreats instead, via its own handler
-        // with none of advance()'s pause/breath-error behavior -- see
-        // retreat()'s comment in useReadingState.ts. All three always
-        // preventDefault() while the pane is focused, even when
-        // returnMode/tapWordOpen mean nothing will actually happen: only
-        // gating preventDefault() on those same conditions is exactly
-        // what let Space fall through to a real page-down scroll during
-        // those states -- invisible on a short passage with nothing to
-        // scroll, but very visible (and disorienting) on a tall book
-        // chapter. Same risk applies to the arrow keys, so the same rule.
+        // Space and ArrowRight both advance, but not immediately on
+        // keydown -- see the hold-to-define comment above HOLD_TO_DEFINE_MS.
+        // Instead this starts a timer; a quick release (onKeyUp below)
+        // cancels it and performs the normal advance, while a sustained
+        // hold lets the timer fire and open tap-to-define for the current
+        // word instead, with zero movement. ArrowLeft retreats instead, on
+        // keydown as before, via its own handler with none of advance()'s
+        // pause/breath-error behavior -- see retreat()'s comment in
+        // useReadingState.ts. All three always preventDefault() while the
+        // pane is focused, even when returnMode/tapWordOpen mean nothing
+        // will actually happen: only gating preventDefault() on those same
+        // conditions is exactly what let Space fall through to a real
+        // page-down scroll during those states -- invisible on a short
+        // passage with nothing to scroll, but very visible (and
+        // disorienting) on a tall book chapter. Same risk applies to the
+        // arrow keys, so the same rule.
         if (e.code === "Space" || e.code === "ArrowRight") {
           e.preventDefault();
-          if (!returnMode && !tapWordOpen) {
-            onSpace();
-          }
+          // Ignore the OS's key-repeat auto-fire entirely -- detection here
+          // is self-timed off the genuine first keydown, not off however
+          // fast/slow the OS decides to repeat. Without this, an auto-
+          // repeat event mid-hold would restart the timer from zero and the
+          // hold would never reach it.
+          if (e.repeat) return;
+          if (returnMode || tapWordOpen) return;
+          holdConsumedRef.current = false;
+          holdTimeoutRef.current = setTimeout(() => {
+            holdTimeoutRef.current = null;
+            holdConsumedRef.current = true;
+            openDefinitionForCurrentWord();
+          }, HOLD_TO_DEFINE_MS);
         } else if (e.code === "ArrowLeft") {
           e.preventDefault();
           if (!returnMode && !tapWordOpen) {
             onRetreat();
           }
+        }
+      }}
+      onKeyUp={(e) => {
+        if (e.code !== "Space" && e.code !== "ArrowRight") return;
+        if (holdTimeoutRef.current) {
+          // Released before the hold threshold -- a genuine tap. Cancel
+          // the timer and perform the normal deferred advance.
+          clearTimeout(holdTimeoutRef.current);
+          holdTimeoutRef.current = null;
+          if (!returnMode && !tapWordOpen) {
+            onSpace();
+          }
+        } else if (holdConsumedRef.current) {
+          // The hold already fired and opened the definition -- this
+          // release just consumes that hold, no further action.
+          holdConsumedRef.current = false;
         }
       }}
     >
