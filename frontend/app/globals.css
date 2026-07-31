@@ -87,9 +87,6 @@ body {
 .swatch--syllable { background: var(--tier-syllable); }
 
 .reading-pane-wrap {
-  /* Positioning context for .breath-overlay below, which covers exactly
-     the passage area (not the whole app-frame) with the calming
-     interruption. */
   position: relative;
 }
 .reading-pane {
@@ -98,7 +95,12 @@ body {
   outline: none;
 }
 .breath-overlay {
-  position: absolute;
+  /* Fixed to the viewport, not the passage -- the passage can be tall
+     enough (a full book chapter) that a container-relative overlay lands
+     off-screen or mid-scroll where the student can't see it. Centering on
+     the viewport guarantees it's always visible regardless of scroll
+     position or passage length. */
+  position: fixed;
   inset: 0;
   z-index: 5;
   display: flex;
@@ -324,6 +326,10 @@ body {
 }
 .library-picker-select:disabled {
   opacity: 0.5;
+}
+.library-picker-status {
+  font-size: 13px;
+  color: var(--muted);
 }
 
 .passage-loader-wrap {
