@@ -74,6 +74,37 @@ function unitDiffers(a: Syllable, b: Syllable, mode: AdvanceMode): boolean {
   return a.word_idx !== b.word_idx; // mode === "word"
 }
 
+// Mirrors findNextIndex, but walks backward to the start of the PREVIOUS
+// unit at the given granularity. Not a simple "scan backward for the first
+// differing index" -- currentIndex isn't guaranteed to already sit on a
+// unit boundary for the *current* advanceMode (the student may have
+// switched modes mid-passage), so this first locates the start of the
+// unit currentIndex is inside, then steps back one more unit from there.
+// Clamps at 0 rather than wrapping to the passage's last unit -- unlike
+// forward's wraparound (a convenience for looping the short demo
+// passage), wrapping backward past the beginning to the end of a whole
+// book chapter would be disorienting, not useful.
+function findPreviousIndex(syllables: Syllable[], currentIndex: number, mode: AdvanceMode): number {
+  if (mode === "syllable") return Math.max(currentIndex - 1, 0);
+  const current = syllables[currentIndex];
+  if (!current) return 0;
+
+  // Walk back to the start of the unit currentIndex is inside.
+  let unitStart = currentIndex;
+  while (unitStart > 0 && !unitDiffers(syllables[unitStart - 1], current, mode)) {
+    unitStart--;
+  }
+  if (unitStart === 0) return 0;
+
+  // Then walk back one more unit from just before that start.
+  const prevReference = syllables[unitStart - 1];
+  let prevStart = unitStart - 1;
+  while (prevStart > 0 && !unitDiffers(syllables[prevStart - 1], prevReference, mode)) {
+    prevStart--;
+  }
+  return prevStart;
+}
+
 export function useReadingState() {
   const [syllables, setSyllables] = useState<Syllable[]>(SAMPLE_SYLLABLES);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -244,6 +275,26 @@ export function useReadingState() {
     // render) just to pick up the latest pause status.
   }, [currentIndex, syllables, advanceMode, triggerBreathError]);
 
+  // Steps back to the start of the previous unit at the current
+  // granularity. Deliberately has none of advance()'s pause/breath-error
+  // machinery -- that system exists to slow down rushing FORWARD past a
+  // boundary; stepping backward to re-check something is a correction,
+  // not a pacing violation. So retreat() never calls triggerBreathError(),
+  // and treats an in-flight pause as something to cancel and step past
+  // rather than something to be blocked by (same cancelPause() jumpToWord
+  // already uses). The one thing it still respects is the breath-error
+  // hold itself: while that's actively playing, retreat is blocked exactly
+  // like advance is -- once "take a breath" has started, nothing exits it
+  // early except its own timer.
+  const retreat = useCallback(() => {
+    if (isBreathErrorRef.current) return;
+
+    cancelPause();
+
+    const previousIndex = findPreviousIndex(syllables, currentIndex, advanceMode);
+    setCurrentIndex(previousIndex);
+  }, [currentIndex, syllables, advanceMode, cancelPause]);
+
   const jumpToWord = useCallback(
     (paragraphIdx: number, wordIdx: number) => {
       cancelPause();
@@ -351,6 +402,7 @@ export function useReadingState() {
     syllables,
     currentIndex,
     advance,
+    retreat,
     jumpToWord,
     isParagraphPause: pauseKind === "paragraph",
     isSentencePause: pauseKind === "sentence",
