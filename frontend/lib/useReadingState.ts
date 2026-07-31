@@ -183,10 +183,11 @@ export function useReadingState() {
     // "not paused" and sail through. Any press during the hold, however
     // many, is a pure no-op -- the hold only ends when the timer below
     // fires, not in response to a press. The one exception is a press
-    // during a SENTENCE pause specifically: that means the student expects
-    // to already be on the next syllable, so instead of eating it silently
-    // we interrupt with the breath-error sequence (paragraph pauses are
-    // left alone -- no mismatch risk there, nothing to jump ahead of).
+    // during ANY pause (sentence- or paragraph-kind): that means the
+    // student expects to already be on the next syllable, so instead of
+    // eating it silently we interrupt with the breath-error sequence --
+    // "take a breath" should land at the end of every sentence, and a
+    // paragraph-crossing pause is always also a sentence-ending one.
     // BUT that mismatch story only makes sense in Syllable/Word mode,
     // where a sentence-crossing pause is still the rare exception to an
     // otherwise fine-grained pace. In Sentence/Paragraph mode, a
@@ -194,9 +195,9 @@ export function useReadingState() {
     // (see findNextIndex/unitDiffers below) -- it's not a desync anymore,
     // it's just the mode's normal rhythm, so a rushed press there is
     // plain impatience, not a mismatch. Treat it as the same silent
-    // no-op paragraph pauses already get in every mode.
+    // no-op it already gets in every mode.
     if (pauseKindRef.current) {
-      if (pauseKindRef.current === "sentence" && (advanceMode === "syllable" || advanceMode === "word")) {
+      if (advanceMode === "syllable" || advanceMode === "word") {
         triggerBreathError();
       }
       return;

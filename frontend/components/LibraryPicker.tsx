@@ -93,6 +93,18 @@ export function LibraryPicker({ onLoadChapter, isLoading, loadError }: LibraryPi
     };
   }, [selectedSlug]);
 
+  // Auto-load: fires whenever the selected book+chapter pair changes --
+  // either a direct chapter pick, or the default first chapter that lands
+  // automatically once a newly-selected book's manifest comes in. No
+  // separate "Load chapter" step for the student to remember; picking is
+  // loading. Re-selecting the same option is a no-op since neither value
+  // actually changes, so this can't fire a redundant reload on its own.
+  useEffect(() => {
+    if (selectedSlug && selectedChapterId) {
+      onLoadChapter(selectedSlug, selectedChapterId);
+    }
+  }, [selectedSlug, selectedChapterId, onLoadChapter]);
+
   const errorToShow = indexError || manifestError || loadError;
 
   return (
@@ -117,7 +129,7 @@ export function LibraryPicker({ onLoadChapter, isLoading, loadError }: LibraryPi
           className="library-picker-select"
           aria-label="Choose a chapter"
           value={selectedChapterId}
-          disabled={!selectedSlug || isManifestLoading || chapters.length === 0}
+          disabled={!selectedSlug || isManifestLoading || isLoading || chapters.length === 0}
           onChange={(e) => setSelectedChapterId(e.target.value)}
         >
           {chapters.map((chapter) => (
@@ -126,13 +138,7 @@ export function LibraryPicker({ onLoadChapter, isLoading, loadError }: LibraryPi
             </option>
           ))}
         </select>
-        <button
-          className="return-btn"
-          disabled={!selectedSlug || !selectedChapterId || isLoading}
-          onClick={() => onLoadChapter(selectedSlug, selectedChapterId)}
-        >
-          {isLoading ? "Loading…" : "Load chapter"}
-        </button>
+        {isLoading && <span className="library-picker-status">Loading…</span>}
       </div>
       {errorToShow && <span className="passage-loader-error">{errorToShow}</span>}
     </div>

@@ -236,9 +236,18 @@ export function ReadingPane({
         lineHeight: "var(--reading-line-height)",
       }}
       onKeyDown={(e) => {
-        if (e.code === "Space" && !returnMode && !tapWordOpen) {
+        if (e.code === "Space") {
+          // Always prevent the browser's native "Space scrolls the page"
+          // behavior while the pane is focused, even when returnMode/
+          // tapWordOpen mean we're not actually going to advance. Only
+          // gating preventDefault() on those same conditions let Space
+          // fall through to a real page-down scroll during those states --
+          // invisible on a short passage with nothing to scroll, but very
+          // visible (and disorienting) on a tall book chapter.
           e.preventDefault();
-          onSpace();
+          if (!returnMode && !tapWordOpen) {
+            onSpace();
+          }
         }
       }}
     >
