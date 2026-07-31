@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { groupSyllables, type Syllable } from "@/lib/types";
-import { SENTENCE_PAUSE_MS, type AdvanceMode } from "@/lib/useReadingState";
+import { SENTENCE_PAUSE_MS, type AdvanceMode, type WordDefineTrigger } from "@/lib/useReadingState";
 
 // Ambient fade speed for ordinary sentence-to-sentence focus shifts (i.e.
 // NOT the deliberate pause below) -- slow and continuous, meant to read as
@@ -34,6 +34,7 @@ interface ReadingPaneProps {
   tapWordOpen: boolean;
   onSpace: () => void;
   onRetreat: () => void;
+  wordDefineTrigger: WordDefineTrigger;
 }
 
 // Reconstructs a sentence's plain text from the (paragraph, sentence)-
@@ -204,6 +205,7 @@ export function ReadingPane({
   tapWordOpen,
   onSpace,
   onRetreat,
+  wordDefineTrigger,
 }: ReadingPaneProps) {
   const paneRef = useRef<HTMLDivElement>(null);
   const currentRef = useRef<HTMLSpanElement>(null);
@@ -214,6 +216,34 @@ export function ReadingPane({
   useEffect(() => {
     currentRef.current?.scrollIntoView({ block: "nearest" });
   }, [currentIndex]);
+
+  // Opens tap-to-define for a triple-tap burst's target word, resolved
+  // the exact same way a real click on that word span would (see the
+  // onClick handler below -- same wordText/sentenceText reconstruction,
+  // just driven by useReadingState's signal instead of a mouse event).
+  // wordDefineTrigger.id is monotonic specifically so the same word
+  // triggering twice in a row still fires twice -- a plain value/object
+  // equality check on repeat identical triggers could otherwise miss the
+  // second one. lastHandledIdRef guards against reprocessing the same
+  // trigger again on an unrelated re-render (e.g. a new chapter loading
+  // changes `syllables`/`grouped`, which re-runs this effect, but the id
+  // will already match what was last handled).
+  const lastHandledWordDefineIdRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (!wordDefineTrigger || wordDefineTrigger.id === lastHandledWordDefineIdRef.current) return;
+    lastHandledWordDefineIdRef.current = wordDefineTrigger.id;
+
+    const target = syllables[wordDefineTrigger.index];
+    if (!target) return;
+    const words = grouped[target.paragraph_idx];
+    if (!words) return;
+    const sylList = words[target.word_idx];
+    if (!sylList) return;
+
+    const wordText = sylList.map((s) => s.text).join("");
+    const sentenceText = getSentenceText(words, target.sentence_idx);
+    onWordTap(target.paragraph_idx, target.word_idx, target.sentence_idx, wordText, sentenceText);
+  }, [wordDefineTrigger, syllables, grouped, onWordTap]);
 
   // Auto-focus the pane on mount so Space advances immediately after a
   // page load/refresh. Without this, keyboard focus defaults to <body>,

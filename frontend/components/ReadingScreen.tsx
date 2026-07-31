@@ -71,6 +71,7 @@ export function ReadingScreen() {
           tapWordOpen={tapWord.isOpen}
           onSpace={state.advance}
           onRetreat={state.retreat}
+          wordDefineTrigger={state.wordDefineTrigger}
         />
         <BreathBanner active={state.isBreathError} />
         {tapWord.activeWord && (

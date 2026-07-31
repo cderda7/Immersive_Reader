@@ -30,8 +30,22 @@ export const BREATH_ERROR_FADE_MS = 900;
 const BREATH_ERROR_HOLD_MS = 1200;
 const BREATH_ERROR_TOTAL_MS = BREATH_ERROR_FADE_MS * 2 + BREATH_ERROR_HOLD_MS;
 
+// A rapid triple-press-to-define gesture is expected to be much faster
+// than a normal reading pace: each press has to land within this many ms
+// of the one before it to count as continuing the same burst (a full
+// 3-press burst is 2 gaps, so worst case spans 2x this from first press
+// to third). Deliberately a PER-GAP check, not a total-span-from-the-
+// first-press check -- the latter would let an earlier, ordinary single
+// press get silently absorbed into a later deliberate rapid-tap sequence
+// just because the combined span happened to still fit under some
+// window, which is exactly wrong: it's what "burst starts here" should
+// reset on, not tolerate. Syllable/word mode only: see
+// recordTripleTapPress below.
+const TRIPLE_TAP_MAX_GAP_MS = 200;
+
 type PauseKind = "paragraph" | "sentence" | null;
 type SentenceRef = { paragraphIdx: number; sentenceIdx: number } | null;
+export type WordDefineTrigger = { index: number; id: number } | null;
 
 // Which unit size the spacebar/click advances by, chosen from the
 // settings panel (ControlBar.tsx's "Advance by" group). Coarsest to
@@ -156,6 +170,21 @@ export function useReadingState() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
+  // Rapid triple-press-to-define tracking. burstTimestampsRef is a
+  // sliding window of qualifying press times (see recordTripleTapPress);
+  // burstStartIndexRef is set ONCE, on the first press of a new window,
+  // and deliberately never updated for the rest of that window -- the
+  // goal is "define the word the student was on when they started
+  // rapid-firing," not wherever the presses (which still do their normal
+  // job every time -- this never suppresses a real advance) end up
+  // landing. wordDefineTrigger is the exposed signal ReadingPane watches;
+  // its `id` is monotonic so the same word can trigger twice in a row
+  // without the consumer missing the second one.
+  const burstTimestampsRef = useRef<number[]>([]);
+  const burstStartIndexRef = useRef<number | null>(null);
+  const wordDefineIdRef = useRef(0);
+  const [wordDefineTrigger, setWordDefineTrigger] = useState<WordDefineTrigger>(null);
+
   const cancelPause = useCallback(() => {
     if (pauseTimeoutRef.current) {
       clearTimeout(pauseTimeoutRef.current);
@@ -168,6 +197,11 @@ export function useReadingState() {
       breathErrorTimeoutRef.current = null;
     }
     setIsBreathError(false);
+    // A forced relocation (jump-to-word, entering return mode, loading a
+    // new chapter) invalidates any in-progress triple-tap burst -- its
+    // remembered start index would no longer point at anything sensible.
+    burstTimestampsRef.current = [];
+    burstStartIndexRef.current = null;
   }, [setPauseKind, setIsBreathError]);
 
   // Clear any pending pause timer on unmount so it can't fire (and call
@@ -202,6 +236,72 @@ export function useReadingState() {
     }, BREATH_ERROR_TOTAL_MS);
   }, [currentIndex, syllables, setPauseKind, setIsBreathError]);
 
+  // Records one "qualifying" press (a press advance() didn't block outright
+  // -- see the two call sites below) toward the rapid triple-tap-to-define
+  // burst. Syllable/word mode only: sentence/paragraph mode has no
+  // meaningful single "current word" for this to target, so a mode change
+  // just drops whatever burst was in progress.
+  //
+  // A press continues the CURRENT burst only if it lands within
+  // TRIPLE_TAP_MAX_GAP_MS of the immediately preceding qualifying press.
+  // Any bigger gap (or no burst in progress at all) starts a brand new
+  // burst instead -- and resets burstStartIndexRef to wherever the
+  // student is RIGHT NOW, not wherever an earlier, unrelated press left
+  // off. That reset is the important part: without it, an ordinary single
+  // press followed shortly after by a genuine rapid-tap sequence would
+  // get treated as one continuous burst, and the remembered "origin"
+  // would stay pinned to that first ordinary press instead of moving to
+  // where the deliberate rapid-tapping actually began.
+  //
+  // On the 3rd qualifying press of a burst, fires wordDefineTrigger using
+  // burstStartIndexRef and resets. Returns which of three things just
+  // happened, NOT just true/false -- the distinction between "started a
+  // brand new burst" and "continued an existing one" matters to the
+  // caller during a pause (see advance()'s pauseKindRef branch): only a
+  // press that's a genuine CONTINUATION should be treated as part of a
+  // deliberate rapid-tap sequence. A press that starts a fresh burst --
+  // even if burstTimestampsRef was already non-empty a moment ago from
+  // some earlier, unrelated single press -- is not that, and needs to
+  // fall through to the normal rushed-press handling instead.
+  const recordTripleTapPress = useCallback((): "started" | "continued" | "fired" => {
+    if (advanceMode !== "syllable" && advanceMode !== "word") {
+      burstTimestampsRef.current = [];
+      burstStartIndexRef.current = null;
+      return "started";
+    }
+    const now = Date.now();
+    const timestamps = burstTimestampsRef.current;
+    const lastTimestamp = timestamps[timestamps.length - 1];
+    const continuesBurst = lastTimestamp !== undefined && now - lastTimestamp <= TRIPLE_TAP_MAX_GAP_MS;
+
+    if (!continuesBurst) {
+      burstTimestampsRef.current = [now];
+      burstStartIndexRef.current = currentIndex;
+      return "started";
+    }
+
+    const updated = [...timestamps, now];
+    if (updated.length >= 3) {
+      const targetIndex = burstStartIndexRef.current ?? currentIndex;
+      // cancelPause() is what makes the snap-back stick even when the
+      // burst's own first press had begun a pause (the
+      // last-word-of-a-sentence case): without canceling it, the pause's
+      // own pending timeout would still fire a moment later and carry
+      // the passage on to the next sentence/paragraph behind the
+      // popover, undoing the snap-back. It also clears the burst refs
+      // for us -- redundant with clearing them below, but harmless.
+      cancelPause();
+      wordDefineIdRef.current += 1;
+      setWordDefineTrigger({ index: targetIndex, id: wordDefineIdRef.current });
+      setCurrentIndex(targetIndex);
+      burstTimestampsRef.current = [];
+      burstStartIndexRef.current = null;
+      return "fired";
+    }
+    burstTimestampsRef.current = updated;
+    return "continued";
+  }, [advanceMode, currentIndex, cancelPause]);
+
   const advance = useCallback(() => {
     // Fully blocked while the breath-error sequence plays -- same
     // synchronous-ref reasoning as pauseKindRef below.
@@ -227,12 +327,36 @@ export function useReadingState() {
     // it's just the mode's normal rhythm, so a rushed press there is
     // plain impatience, not a mismatch. Treat it as the same silent
     // no-op it already gets in every mode.
+    //
+    // One more exception layered on top: a press arriving during a pause
+    // still gets checked against the same per-gap rule recordTripleTapPress
+    // uses everywhere else -- NOT just "is some burst being tracked at
+    // all." A single ordinary press that happens to be the one that
+    // caused this very pause ALSO leaves a fresh 1-entry burst behind (it
+    // has to start tracking somewhere), so testing for "any burst in
+    // progress" would incorrectly treat the very next impatient press as
+    // a continuation and swallow it -- exactly the rushed press
+    // breath-error exists to catch. Only a press that's a genuine
+    // CONTINUATION (within TRIPLE_TAP_MAX_GAP_MS of the press before it)
+    // gets absorbed silently instead, which is what lets triple-tapping
+    // land squarely on a pause (e.g. the last word of a sentence) still
+    // resolve to "define this word" instead of interrupting into "take a
+    // breath." Anything else -- no burst, or one that just started fresh
+    // right here -- gets the existing, unchanged breath-error behavior.
     if (pauseKindRef.current) {
       if (advanceMode === "syllable" || advanceMode === "word") {
-        triggerBreathError();
+        if (recordTripleTapPress() === "started") {
+          triggerBreathError();
+        }
       }
       return;
     }
+
+    // If this press completes a triple-tap burst, recordTripleTapPress()
+    // has already snapped currentIndex back to the burst's start and
+    // opened the definition -- skip this press's own normal movement
+    // entirely rather than letting it advance further afterward.
+    if (recordTripleTapPress() === "fired") return;
 
     const nextIndex = findNextIndex(syllables, currentIndex, advanceMode);
     const current = syllables[currentIndex];
@@ -273,7 +397,7 @@ export function useReadingState() {
     // the guard above reads pauseKindRef instead specifically so this
     // callback doesn't need to be recreated (and re-propagated through a
     // render) just to pick up the latest pause status.
-  }, [currentIndex, syllables, advanceMode, triggerBreathError]);
+  }, [currentIndex, syllables, advanceMode, triggerBreathError, recordTripleTapPress]);
 
   // Steps back to the start of the previous unit at the current
   // granularity. Deliberately has none of advance()'s pause/breath-error
@@ -285,7 +409,9 @@ export function useReadingState() {
   // already uses). The one thing it still respects is the breath-error
   // hold itself: while that's actively playing, retreat is blocked exactly
   // like advance is -- once "take a breath" has started, nothing exits it
-  // early except its own timer.
+  // early except its own timer. cancelPause() also clears any in-progress
+  // triple-tap burst, which is exactly right here too -- a backward press
+  // breaking a forward-rushing burst should void it, not let it resume.
   const retreat = useCallback(() => {
     if (isBreathErrorRef.current) return;
 
@@ -404,6 +530,7 @@ export function useReadingState() {
     advance,
     retreat,
     jumpToWord,
+    wordDefineTrigger,
     isParagraphPause: pauseKind === "paragraph",
     isSentencePause: pauseKind === "sentence",
     pendingSentence,
