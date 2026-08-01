@@ -48,6 +48,18 @@ interface ReadingPaneProps {
     wordText: string,
     sentenceText: string
   ) => void;
+  // Opens the full-screen "Simplify sentence" focus view directly for the
+  // hovered word's sentence -- triggered by the hover-triggered SIMPLIFY
+  // SENTENCE chip below, same trigger shape as onWordTap (which opens the
+  // ordinary tap-to-define card instead) but skipping straight past it.
+  // See useTapWord.ts's openSimplifyFocusForWord.
+  onOpenSimplify: (
+    paragraphIdx: number,
+    wordIdx: number,
+    sentenceIdx: number,
+    wordText: string,
+    sentenceText: string
+  ) => void;
   tapWordOpen: boolean;
   onSpace: () => void;
   onRetreat: () => void;
@@ -227,6 +239,7 @@ export function ReadingPane({
   advanceMode,
   onJumpToWord,
   onWordTap,
+  onOpenSimplify,
   tapWordOpen,
   onSpace,
   onRetreat,
@@ -555,36 +568,75 @@ export function ReadingPane({
                           })}
                         </span>
                         {isHovered && (
-                          <button
-                            type="button"
-                            className="jump-here-btn"
-                            // Both the word span above and this chip live
-                            // inside the same .reading-word-wrap, so a
-                            // click here never also bubbles into a
-                            // DIFFERENT word's onClick -- no
-                            // stopPropagation needed for correctness, just
-                            // clearing the hover state so the chip doesn't
-                            // linger, visually stale, over the word's new
-                            // reading position after the jump. Also arms
-                            // suppressHoverRef briefly -- see its comment
-                            // above -- so removing this button doesn't
-                            // immediately re-trigger a hover for whatever
-                            // text it was overlapping.
-                            onClick={() => {
-                              setHoveredWordKey(null);
-                              suppressHoverRef.current = true;
-                              if (suppressHoverTimeoutRef.current) {
-                                clearTimeout(suppressHoverTimeoutRef.current);
-                              }
-                              suppressHoverTimeoutRef.current = setTimeout(() => {
-                                suppressHoverRef.current = false;
-                                suppressHoverTimeoutRef.current = null;
-                              }, 250);
-                              onJumpToWord(paragraphIdx, wordIdx);
-                            }}
-                          >
-                            JUMP HERE
-                          </button>
+                          <span className="word-actions">
+                            <button
+                              type="button"
+                              className="jump-here-btn"
+                              // Both the word span above and this chip live
+                              // inside the same .reading-word-wrap, so a
+                              // click here never also bubbles into a
+                              // DIFFERENT word's onClick -- no
+                              // stopPropagation needed for correctness, just
+                              // clearing the hover state so the row doesn't
+                              // linger, visually stale, over the word's new
+                              // reading position after the jump. Also arms
+                              // suppressHoverRef briefly -- see its comment
+                              // above -- so removing this row doesn't
+                              // immediately re-trigger a hover for whatever
+                              // text it was overlapping.
+                              onClick={() => {
+                                setHoveredWordKey(null);
+                                suppressHoverRef.current = true;
+                                if (suppressHoverTimeoutRef.current) {
+                                  clearTimeout(suppressHoverTimeoutRef.current);
+                                }
+                                suppressHoverTimeoutRef.current = setTimeout(() => {
+                                  suppressHoverRef.current = false;
+                                  suppressHoverTimeoutRef.current = null;
+                                }, 250);
+                                onJumpToWord(paragraphIdx, wordIdx);
+                              }}
+                            >
+                              JUMP HERE
+                            </button>
+                            {run.sentenceIdx !== undefined && (
+                              <button
+                                type="button"
+                                className="simplify-sentence-btn"
+                                // Mirrors jump-here-btn's onClick above:
+                                // clear the hover state (so the row doesn't
+                                // linger stale once the focus view takes
+                                // over the whole screen) and briefly
+                                // suppress the synthetic re-hover Chrome
+                                // fires for whatever's now topmost under a
+                                // stationary cursor once this row unmounts
+                                // -- same suppressHoverRef reasoning as
+                                // JUMP HERE's own click handler.
+                                onClick={() => {
+                                  setHoveredWordKey(null);
+                                  suppressHoverRef.current = true;
+                                  if (suppressHoverTimeoutRef.current) {
+                                    clearTimeout(suppressHoverTimeoutRef.current);
+                                  }
+                                  suppressHoverTimeoutRef.current = setTimeout(() => {
+                                    suppressHoverRef.current = false;
+                                    suppressHoverTimeoutRef.current = null;
+                                  }, 250);
+                                  const wordText = sylList.map((s) => s.text).join("");
+                                  const sentenceText = getSentenceText(words, run.sentenceIdx as number);
+                                  onOpenSimplify(
+                                    paragraphIdx,
+                                    wordIdx,
+                                    run.sentenceIdx as number,
+                                    wordText,
+                                    sentenceText
+                                  );
+                                }}
+                              >
+                                SIMPLIFY SENTENCE
+                              </button>
+                            )}
+                          </span>
                         )}
                       </span>
                     );

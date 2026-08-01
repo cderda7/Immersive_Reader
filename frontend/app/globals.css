@@ -181,9 +181,10 @@ body {
   padding: 0 1px;
 }
 
-/* Wraps one word AND its hover-triggered .jump-here-btn (see
-   ReadingPane.tsx) in a single positioning context, so the button can be
-   anchored directly under the word with `position: absolute`. Plain
+/* Wraps one word AND its hover-triggered .word-actions row (JUMP HERE +
+   SIMPLIFY SENTENCE, see ReadingPane.tsx) in a single positioning
+   context, so that row can be anchored directly under the word with
+   `position: absolute`. Plain
    inline-block with no size/spacing of its own -- shrink-to-fit sizing
    means it hugs .reading-word's existing box (including that span's own
    margin-right), so introducing this wrapper doesn't change word spacing
@@ -196,19 +197,26 @@ body {
    word's bottom edge exactly. mouseenter/mouseleave are scoped to the DOM
    subtree under .reading-word-wrap (see that component's comment), not a
    rectangular hit region, so moving the pointer from the word straight
-   down onto this button never leaves the wrapper's subtree as long as
+   down onto this row never leaves the wrapper's subtree as long as
    there's no dead pixel strip between them for it to pass through first --
    a real gap here would let the pointer cross into whatever's rendered
    just past the wrapper's own box (often the next line of text) and fire
-   a premature mouseleave, closing the chip before the click lands. */
-.jump-here-btn {
+   a premature mouseleave, closing the chips before a click lands. Holds
+   BOTH hover-triggered chips side by side, JUMP HERE then SIMPLIFY
+   SENTENCE (see ReadingPane.tsx) -- a flex row rather than each button
+   positioning itself, so they sit flush against each other as one group
+   under the word instead of needing separately hand-tuned offsets. */
+.word-actions {
   position: absolute;
   top: 100%;
   left: 50%;
   transform: translateX(-50%);
   z-index: 15;
-  background: #d9730d;
-  color: #fff;
+  display: flex;
+  gap: 6px;
+}
+.jump-here-btn,
+.simplify-sentence-btn {
   border: none;
   border-radius: 6px;
   padding: 3px 8px;
@@ -219,8 +227,23 @@ body {
   cursor: pointer;
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
 }
+.jump-here-btn {
+  background: #d9730d;
+  color: #fff;
+}
 .jump-here-btn:hover {
   background: #c1650a;
+}
+/* Colored off --tier-syllable/--ink to match the existing "🪄 Simplify
+   sentence" button in the tap-word card (.simplify-popover__btn) -- same
+   action, same color, just reachable a step earlier (straight from a
+   hover, before ever tapping the word). */
+.simplify-sentence-btn {
+  background: var(--tier-syllable);
+  color: var(--ink);
+}
+.simplify-sentence-btn:hover {
+  opacity: 0.85;
 }
 
 /* Tap-word card (WordInfoPopover.tsx) -- word-level pronunciation/
@@ -382,7 +405,12 @@ body {
   flex-direction: column;
   background: var(--paper);
   cursor: pointer;
-  padding: 20px 44px 12px;
+  /* Just enough left/right padding to keep the close button and content
+     off the very edge of the viewport -- the actual reading-width limits
+     live on .simplify-focus__row--main and .simplify-focus__context-
+     paragraph below, not here, so this shouldn't also be adding its own
+     wide margin on top of theirs. */
+  padding: 20px 20px 12px;
   box-sizing: border-box;
 }
 .simplify-focus__close {
@@ -416,7 +444,21 @@ body {
    independently-sized viewport thirds with their own ad hoc padding.
    Rows with nothing in them are skipped in the JSX entirely (see
    SimplifySentenceFocus.tsx) rather than rendered empty, so gap doesn't
-   insert a phantom space next to an absent side. */
+   insert a phantom space next to an absent side.
+
+   overflow-y: auto is the safety net for .simplify-focus__row--main's own
+   text wrapping (see .simplify-focus__line-inner's own FORMATTING RULE
+   comment below): each sentence there wraps to as many lines as it needs
+   at a fixed size rather than ever shrinking, uncapped, so a genuinely
+   long sentence can end up taller than the viewport. Without this, an
+   overflowing .simplify-focus__row--main would just extend past this
+   fixed-viewport overlay with no way to reach the rest -- the exact "not
+   showing me the whole sentence" failure fixed-size wrapping is meant to
+   avoid, just moved from horizontal (clipped/shrunk text) to vertical
+   (unreachable lines). min-height: 0 (already present, needed for the
+   scroll to ever kick in on a flex child) stays; justify-content: center
+   still centers the common case where everything fits without
+   scrolling. */
 .simplify-focus__stack {
   flex: 1;
   min-height: 0;
@@ -424,6 +466,7 @@ body {
   flex-direction: column;
   justify-content: center;
   gap: 10px;
+  overflow-y: auto;
 }
 .simplify-focus__row {
   display: flex;
@@ -452,18 +495,20 @@ body {
   justify-content: flex-start;
 }
 /* Two-column comparison layout, per product direction ("original left
-   half, simplified right half, split into lines, so students compare
-   left to right") -- replaces the earlier vertical SA1/SB1/SA2/SB2
-   interleaved stack. Explicit gridColumn/gridRow placement is set inline
-   per line in SimplifySentenceFocus.tsx (original always column 1,
-   simplified always column 2, row = that segment's own index + 1) rather
-   than relying on DOM-order auto-flow, since the two sentences can have
-   different segment counts and auto-flow would misalign the columns the
-   moment one side is missing a middle segment. align-items: center keeps
-   a short segment vertically centered within its row rather than glued
-   to the top when the OTHER column's same-row segment happens to be
-   taller (wrapped context aside, single-line segments are usually the
-   same height, but this is a cheap safety net). position: relative here
+   half, simplified right half, so students compare left to right") --
+   each column is now just ONE sentence, wrapped normally (see
+   .simplify-focus__line-inner below) rather than the earlier vertical
+   SA1/SB1/SA2/SB2 interleaved stack of forced-single-line pieces.
+   Explicit gridColumn/gridRow placement is set inline per line in
+   SimplifySentenceFocus.tsx (original always column 1, simplified always
+   column 2, both row 1 -- there's only one segment per sentence now)
+   rather than relying on DOM-order auto-flow, so a missing side (no
+   simplified phase yet/at all) can't shift the remaining one into the
+   wrong column. align-items: start (not center) -- a wrapped sentence can
+   end up noticeably taller than its counterpart now that either side may
+   span several lines, and top-aligning both keeps their FIRST lines level
+   with each other, which reads better than centering two very
+   different-height blocks against one another. position: relative here
    is only so the ::before divider below can anchor to this box. */
 .simplify-focus__row--main {
   position: relative;
@@ -471,17 +516,24 @@ body {
   grid-template-columns: 1fr 1fr;
   column-gap: 28px;
   row-gap: 10px;
-  align-items: center;
+  align-items: start;
   width: 100%;
-  max-width: 1100px;
+  /* Widened from 1100px -- on anything wider than a laptop screen, a
+     1100px cap left a lot of dead space on both sides of the two-column
+     comparison. 1600px keeps a sane upper bound (an ultra-wide monitor
+     shouldn't stretch each column into an unreadably long line) while
+     using far more of the available width on ordinary screens. Wider
+     columns are also a direct win for the fixed-size/no-shrink wrapping
+     rule above (see .simplify-focus__line-inner) -- more width per
+     column means fewer wrapped lines for the same fixed font size. */
+  max-width: 1600px;
   margin: 0 auto;
 }
 /* A thin vertical rule between the two columns -- drawn as a standalone
-   absolutely-positioned line rather than a border/padding on the
-   measured .simplify-focus__line elements themselves, so it can't throw
-   off useSharedScale's clientWidth-vs-scrollWidth measurement (a border
-   or padding on the measured element would make clientWidth overstate
-   the width actually available to its content). */
+   absolutely-positioned line rather than a border/padding on
+   .simplify-focus__line itself, so it can't affect that element's box
+   sizing (and therefore the width available for its text to wrap
+   against). */
 .simplify-focus__row--main::before {
   content: "";
   position: absolute;
@@ -500,9 +552,24 @@ body {
    text (not the smaller/italic backdrop treatment this started as) --
    still --muted rather than --ink so it's clearly distinguishable from
    the sentence actively being read, but legible as real passage text in
-   its own right, not a caption. */
+   its own right, not a caption.
+
+   FORMATTING RULE: this font-size must always stay SMALLER than
+   .simplify-focus__line-inner's below -- the focused SENTENCE/SIMPLIFIED
+   SENTENCE has to read as slightly bigger than the context around it.
+   Both are now plain fixed px values with nothing that ever scales or
+   shrinks either one (see .simplify-focus__line-inner's own comment), so
+   this is just "pick two numbers, keep this one smaller" -- no floor math
+   or cross-file constant to keep in sync anymore.
+
+   max-width widened from 720px alongside .simplify-focus__row--main's own
+   widening above, for the same reason (too much unused margin on wider
+   screens) -- capped lower than that row's 1600px on purpose, though:
+   this is single-column prose, not two side-by-side columns, and a line
+   much past ~900px at this font-size starts hurting reading comfort
+   rather than helping it. */
 .simplify-focus__context-paragraph {
-  max-width: 720px;
+  max-width: 900px;
   margin: 0 auto;
   text-align: left;
   font-size: 19px;
@@ -522,53 +589,95 @@ body {
   text-align: center;
 }
 
-/* One SEGMENT of one sentence (SA1/SB1/SA2/SB2/... -- see
-   SimplifySentenceFocus.tsx's splitIntoParts/interleaveSegments), placed
-   into its column/row via inline gridColumn/gridRow (set by the caller,
-   see .simplify-focus__row--main above) and forced onto a single line --
-   see useSharedScale, which measures each segment's natural (unscaled)
-   width and shrinks .simplify-focus__line-inner with transform: scale()
-   by ONE shared factor across every segment of the SAME sentence (not
-   independently per line), so e.g. a short final SA segment renders at
-   the same size as an earlier, more cramped SA segment rather than
-   ballooning up to its own natural size. overflow: hidden is a safety
-   net for the very first paint, before the scale has been computed. Both
-   original (SA) and simplified (SB) segments are always full --ink
-   weight/color and bold now -- product direction dropped the previous
-   muted-when-not-currently-being-read convention (the per-word/syllable
-   highlight below is the only "current position" indicator now, same
-   tinted-background mechanic the main reading pane itself uses).
-   --simplified is additionally italic, the one remaining visual cue that
-   distinguishes a rewrite from the original wording at a glance. */
+/* One sentence's block (SA or SB -- see SimplifySentenceFocus.tsx's
+   interleaveSegments), placed into its column via inline gridColumn/
+   gridRow (set by the caller, see .simplify-focus__row--main above).
+   Both original (SA) and simplified (SB) are always full --ink weight/
+   color and bold -- product direction dropped the previous muted-when-
+   not-currently-being-read convention (the per-word/syllable highlight
+   below is the only "current position" indicator now, same tinted-
+   background mechanic the main reading pane itself uses). --simplified
+   is additionally italic, the one remaining visual cue that distinguishes
+   a rewrite from the original wording at a glance.
+
+   FORMATTING RULE: FIXED text size, always -- font-size below is a plain
+   constant, never adjusted by scale/transform or any measured value. A
+   long sentence gets MORE LINES instead: .simplify-focus__line-inner is
+   ordinary wrapping block text (no white-space: nowrap, no width
+   constraint tighter than its grid column), so the browser's own
+   line-breaking greedily packs as many words onto each line as fit
+   before wrapping -- the same algorithm that wraps any paragraph, and
+   the most direct way to satisfy "fit as many words of that size on the
+   line" without a custom fit/grow loop that could over- or
+   under-fragment it (an earlier version had exactly that problem: it
+   split each sentence into evenly-sized pieces rather than packing each
+   line as full as possible, so one long piece forced ALL pieces smaller
+   and produced more lines than necessary).
+
+   Also must always stay LARGER than .simplify-focus__context-paragraph's
+   font-size above -- see that rule's own comment. Since neither size
+   here nor there is ever computed, that's now just two constants, kept
+   in the right order by inspection, not code. */
 .simplify-focus__line {
   width: 100%;
-  overflow: hidden;
-  display: flex;
-  justify-content: center;
 }
 .simplify-focus__line-inner {
-  display: inline-block;
-  white-space: nowrap;
-  transform-origin: center center;
   font-size: 22px;
   font-weight: 700;
+  line-height: 1.4;
   color: var(--ink);
 }
+/* FORMATTING RULE (product direction): the SIMPLIFIED sentence always
+   carries the same cream tint ReadingPane.tsx uses for its own
+   paragraph-mode background (--tier-paragraph) -- permanently, on every
+   clause, not just the one currently being read (contrast
+   .simplify-focus__line--current below, which is conditional). This is
+   a block-level background on .simplify-focus__line-inner itself (not
+   built from per-word inline spans the way ReadingPane.tsx's own
+   sentence tint is), so a clause that wraps across several lines paints
+   as ONE continuous rounded rectangle behind all of them -- "unified
+   within chunk" -- with no box-decoration-break trick needed the way
+   ReadingPane.tsx's inline-span version requires. Chunks stay visually
+   SEPARATE from each other because each clause is already its own grid
+   row (see .simplify-focus__row--main above) with its own row-gap --
+   "separate for sentence" -- nothing extra needed there either; this
+   rule only has to handle the "unified within chunk" half.
+   .simplify-focus__line--current below still layers a ring on top (see
+   its own comment) so sentence-mode's "where am I" cue survives even
+   though the background alone can no longer carry it for this side. */
 .simplify-focus__line--simplified .simplify-focus__line-inner {
   font-style: italic;
+  background: var(--tier-paragraph);
+  border-radius: 6px;
+  padding: 2px 10px;
 }
 /* Sentence-mode's own "where am I" indicator -- word/syllable mode
    already has the per-word/syllable tint (see .reading-word--current),
    but sentence mode carries neither of those, so without this the
-   current SA/SB segment would be indistinguishable from the rest now
-   that text color no longer marks it either. Same --tier-word background
-   ReadingPane.tsx uses for its own sentence-mode tint, just applied to a
-   whole segment line here (see SimplifySentenceFocus.tsx's tintCurrent).
-   Paragraph mode intentionally gets no indicator, same as the main pane. */
+   current SA segment would be indistinguishable from the rest now that
+   text color no longer carries that signal either. Same --tier-word
+   background ReadingPane.tsx uses for its own sentence-mode tint, just
+   applied to a whole clause line here (see SimplifySentenceFocus.tsx's
+   tintCurrent). Paragraph mode intentionally gets no indicator, same as
+   the main pane. */
 .simplify-focus__line--current .simplify-focus__line-inner {
   background: var(--tier-word);
   border-radius: 6px;
   padding: 2px 10px;
+}
+/* The simplified side is ALWAYS tinted --tier-paragraph now (see the
+   --simplified rule above), which no longer matches the plain --current
+   rule above (still --tier-word, for the ORIGINAL sentence's own
+   indicator) -- so background is re-asserted here to keep the simplified
+   side's permanent paragraph tint winning over that shared rule's beige
+   (same specificity, but --current comes later in the file and would
+   otherwise take over). A ring (a darker tier's color, --tier-syllable,
+   as a box-shadow rather than another background layer) is added on top
+   so sentence mode's "where am I" cue still shows up on the simplified
+   side too, distinct from its own permanent resting tint. */
+.simplify-focus__line--simplified.simplify-focus__line--current .simplify-focus__line-inner {
+  background: var(--tier-paragraph);
+  box-shadow: 0 0 0 2px var(--tier-syllable);
 }
 
 .simplify-focus__hint {

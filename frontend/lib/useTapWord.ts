@@ -413,63 +413,78 @@ export function useTapWord(gradeLevel: number = 9) {
     return `${sentence} ${grade}`;
   }
 
+  // Does the actual fetch (or cache reuse) for a simplified rewrite of
+  // `sentence` at the teacher-configured grade level. Extracted from
+  // simplifySentence below (which sources `sentence` from activeWord
+  // state) so openSimplifyFocusForWord can also call it with a sentence
+  // it already has in hand -- from the word that was just hovered/clicked
+  // in ReadingPane.tsx, not yet reflected in activeWord state (setState
+  // is async; reading activeWord.sentenceText back in the same callback
+  // that just set it would still see the PREVIOUS word). Reuses
+  // requestIdRef for the same staleness reason as fetchWordInfo/
+  // fetchExampleOnly: if the student moves on to a different word before
+  // this resolves, the response is stale and should be ignored rather
+  // than clobbering whatever's now active.
+  const runSimplify = useCallback(
+    (sentence: string) => {
+      const cacheKeyStr = simplifyCacheKey(sentence, gradeLevel);
+      const cached = simplifyCacheRef.current.get(cacheKeyStr);
+      if (cached !== undefined) {
+        setSimplifiedSentence(cached);
+        setSimplifyError(null);
+        return;
+      }
+
+      const requestId = requestIdRef.current;
+      const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+      setIsSimplifying(true);
+      setSimplifyError(null);
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+      fetch(`${apiUrl}/api/simplify-sentence`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sentence, grade_level: gradeLevel }),
+        signal: controller.signal,
+      })
+        .then(async (res) => {
+          if (!res.ok) {
+            const body = await res.json().catch(() => null);
+            throw new Error(body?.error ?? `Backend returned ${res.status}`);
+          }
+          return res.json();
+        })
+        .then((data: SimplifiedSentence) => {
+          if (requestIdRef.current !== requestId) return; // stale -- student tapped away
+          simplifyCacheRef.current.set(cacheKeyStr, data);
+          setSimplifiedSentence(data);
+          setIsSimplifying(false);
+        })
+        .catch((err) => {
+          if (requestIdRef.current !== requestId) return;
+          setSimplifyError(
+            err.name === "AbortError"
+              ? "Simplifying this sentence is taking too long."
+              : err instanceof Error
+                ? `Couldn't simplify this sentence (${err.message}).`
+                : "Couldn't simplify this sentence."
+          );
+          setIsSimplifying(false);
+        })
+        .finally(() => clearTimeout(timeoutId));
+    },
+    [gradeLevel]
+  );
+
   // Fetches (or reuses a cached) simplified rewrite of the active word's
-  // sentence at the teacher-configured grade level. Independent of
-  // fetchWordInfo/fetchExampleOnly above -- doesn't touch wordInfo,
-  // stages, or stageIndex at all -- but reuses requestIdRef for the same
-  // staleness reason: if the student taps away to a different word
-  // before this resolves, the response is stale and should be ignored
-  // rather than clobbering whatever's now active.
+  // sentence -- thin wrapper over runSimplify for the ordinary case where
+  // activeWord is already set (WordInfoPopover.tsx's "🪄 Simplify
+  // sentence" button, via openSimplifyFocus below).
   const simplifySentence = useCallback(() => {
     if (!activeWord) return;
-    const sentence = activeWord.sentenceText;
-    const cacheKeyStr = simplifyCacheKey(sentence, gradeLevel);
-    const cached = simplifyCacheRef.current.get(cacheKeyStr);
-    if (cached !== undefined) {
-      setSimplifiedSentence(cached);
-      setSimplifyError(null);
-      return;
-    }
-
-    const requestId = requestIdRef.current;
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-    setIsSimplifying(true);
-    setSimplifyError(null);
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-
-    fetch(`${apiUrl}/api/simplify-sentence`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sentence, grade_level: gradeLevel }),
-      signal: controller.signal,
-    })
-      .then(async (res) => {
-        if (!res.ok) {
-          const body = await res.json().catch(() => null);
-          throw new Error(body?.error ?? `Backend returned ${res.status}`);
-        }
-        return res.json();
-      })
-      .then((data: SimplifiedSentence) => {
-        if (requestIdRef.current !== requestId) return; // stale -- student tapped away
-        simplifyCacheRef.current.set(cacheKeyStr, data);
-        setSimplifiedSentence(data);
-        setIsSimplifying(false);
-      })
-      .catch((err) => {
-        if (requestIdRef.current !== requestId) return;
-        setSimplifyError(
-          err.name === "AbortError"
-            ? "Simplifying this sentence is taking too long."
-            : err instanceof Error
-              ? `Couldn't simplify this sentence (${err.message}).`
-              : "Couldn't simplify this sentence."
-        );
-        setIsSimplifying(false);
-      })
-      .finally(() => clearTimeout(timeoutId));
-  }, [activeWord, gradeLevel]);
+    runSimplify(activeWord.sentenceText);
+  }, [activeWord, runSimplify]);
 
   // Entry point for the "🪄 Simplify sentence" button (WordInfoPopover.tsx)
   // -- opens the full-screen recentered focus view immediately AND kicks
@@ -481,6 +496,39 @@ export function useTapWord(gradeLevel: number = 9) {
     setIsSimplifyFocusOpen(true);
     simplifySentence();
   }, [simplifySentence]);
+
+  // Entry point for the reading pane's own hover-triggered "SIMPLIFY
+  // SENTENCE" chip (see ReadingPane.tsx's per-word wrapper, mirroring the
+  // existing JUMP HERE chip, just anchored above the word instead of
+  // below) -- opens the focus view straight from a hover, skipping the
+  // ordinary tap-to-define card (WordInfoPopover.tsx) entirely.
+  // ReadingScreen.tsx renders SimplifySentenceFocus whenever activeWord
+  // && isSimplifyFocusOpen are both true, regardless of which path set
+  // them, so setting both here is enough. Mirrors tapWord's own "new
+  // word" branch for activeWord/stage/simplify-state resets (wordInfo/
+  // error/isLoading too, since fetchWordInfo -- which would normally
+  // reset those -- is deliberately never called on this path; there's no
+  // tap-to-define card to show that data in), then calls runSimplify
+  // directly with the sentence text already in hand rather than through
+  // simplifySentence (which would read activeWord state back before
+  // React has actually applied the setActiveWord call just below).
+  const openSimplifyFocusForWord = useCallback(
+    (paragraphIdx: number, wordIdx: number, sentenceIdx: number, wordText: string, sentenceText: string) => {
+      requestIdRef.current += 1;
+      setActiveWord({ paragraphIdx, wordIdx, sentenceIdx, word: wordText, sentenceText });
+      setStageIndex(0);
+      setWordInfo(null);
+      setIsLoading(false);
+      setError(null);
+      setExampleError(null);
+      setSimplifiedSentence(null);
+      setSimplifyError(null);
+      setIsSimplifying(false);
+      setIsSimplifyFocusOpen(true);
+      runSimplify(sentenceText);
+    },
+    [runSimplify]
+  );
 
   // Leaving the focus view WITHOUT having read all the way through it
   // (Escape, the close button, or retreating past its first unit -- see
@@ -518,6 +566,7 @@ export function useTapWord(gradeLevel: number = 9) {
     simplifySentence,
     isSimplifyFocusOpen,
     openSimplifyFocus,
+    openSimplifyFocusForWord,
     closeSimplifyFocus,
   };
 }

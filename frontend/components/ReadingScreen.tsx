@@ -60,20 +60,24 @@ export function ReadingScreen() {
   // not a state that resets just because the DOM mounted a new listener.
   const heldKeysRef = useRef<Set<string>>(new Set());
 
-  // Auto-load the teacher-linked chapter once on mount. Guarded by a ref
-  // (not just the effect's dependency array) so this fires exactly once
-  // even if searchParams' identity happens to change on a later render
-  // -- re-firing loadChapter mid-session would silently yank the student
-  // back to word 1 of a chapter they may have already read into.
+  // Auto-load a chapter once on mount -- either the teacher-linked one
+  // (?book=/?chapter=), or, absent that, Moby Dick's Chapter 1 as the
+  // app's own default opening (see frontend/public/library/moby-dick/
+  // manifest.json's first entry -- slug "moby-dick", chapter id "001")
+  // rather than landing on the plain "quick brown fox" placeholder text
+  // (see lib/sampleData.ts) that only ever showed up because nothing else
+  // had loaded yet. Guarded by a ref (not just the effect's dependency
+  // array) so this fires exactly once even if searchParams' identity
+  // happens to change on a later render -- re-firing loadChapter
+  // mid-session would silently yank the student back to word 1 of a
+  // chapter they may have already read into.
   const autoLoadedRef = useRef(false);
   useEffect(() => {
     if (autoLoadedRef.current) return;
-    const book = searchParams.get("book");
-    const chapter = searchParams.get("chapter");
-    if (book && chapter) {
-      autoLoadedRef.current = true;
-      state.loadChapter(book, chapter);
-    }
+    const book = searchParams.get("book") || "moby-dick";
+    const chapter = searchParams.get("chapter") || "001";
+    autoLoadedRef.current = true;
+    state.loadChapter(book, chapter);
   }, [searchParams, state.loadChapter]);
 
   // Drive the CSS variables the typography controls target, so the whole
@@ -107,6 +111,7 @@ export function ReadingScreen() {
           advanceMode={state.advanceMode}
           onJumpToWord={state.jumpToWord}
           onWordTap={tapWord.tapWord}
+          onOpenSimplify={tapWord.openSimplifyFocusForWord}
           tapWordOpen={tapWord.isOpen}
           onSpace={state.advance}
           onRetreat={state.retreat}

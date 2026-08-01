@@ -1177,6 +1177,37 @@ def simplify_sentence(sentence: str, grade_level: int) -> dict:
         return cached
 
     client = _get_anthropic_client()
+    # The STRUCTURE paragraph below exists because of two real failures,
+    # both on the same underlying problem -- the rewrite's clause-joining
+    # punctuation drifting away from the original's:
+    #   1. A semicolon-joined sentence built from several parallel
+    #      independent clauses (the same repeated pattern -- e.g.
+    #      "whenever X; whenever Y; whenever Z" -- restated three times)
+    #      came back rewritten so that only the first clause kept that
+    #      repeated pattern; the rest drifted into different phrasing/
+    #      structure, and the semicolons became commas.
+    #   2. A comma-joined sentence ("...washed by waves, and cooled by
+    #      breezes...") came back with one of those commas turned into a
+    #      SEMICOLON instead -- the opposite direction, and not even a
+    #      semicolon/colon-involving sentence to begin with, so the
+    #      earlier version of this rule (which only ever talked about
+    #      semicolons/colons) had nothing to say about it at all.
+    # Both are the same lesson: don't reason about what punctuation
+    # "should" join two clauses grammatically -- read what the ORIGINAL
+    # actually used at that exact spot, whatever mark it is, and put that
+    # same mark back. That's not just a worse rewrite -- SimplifySentenceFocus.tsx
+    # renders the original and simplified sentences CLAUSE FOR CLAUSE,
+    # side by side, specifically so a student can see how each clause
+    # maps onto its simplified counterpart; a rewrite that swaps a comma
+    # for a semicolon (or the reverse) teaches the wrong lesson about how
+    # that punctuation works, not just a less polished one. The
+    # instruction below is deliberately explicit and repeats itself (once
+    # as a rule, once as a self-check) rather than trusting one mention of
+    # "keep the same structure" to survive an otherwise-aggressive
+    # rewrite -- grade-level simplification prompts pull hard toward
+    # rephrasing everything, and this has to pull back just as hard on
+    # the one dimension (clause structure and its exact punctuation) that
+    # must survive unchanged.
     prompt = (
         f'Sentence: "{sentence}"\n\n'
         f"First judge: is this sentence already plain, literal, modern English that would "
@@ -1184,7 +1215,26 @@ def simplify_sentence(sentence: str, grade_level: int) -> dict:
         "needs_simplification is false and simplified can be left empty. If no -- it uses "
         "figurative language, archaic or unusual wording, or an unusually complex structure "
         "-- set needs_simplification to true and rewrite the WHOLE sentence in simpler "
-        "language, keeping the same meaning. Call the assess_and_simplify tool."
+        "language, keeping the same meaning.\n\n"
+        "STRUCTURE RULE, non-negotiable: before rewriting, go through the ORIGINAL sentence "
+        "and find every point where one clause ends and another begins, and note the EXACT "
+        "punctuation mark joining them there -- a comma, a semicolon, a colon, a dash, "
+        "whatever it actually is. This applies no matter which mark it is, not just "
+        "semicolons/colons. The rewrite MUST keep that exact same number of clause-joins, in "
+        "the same order, each one joined by the SAME mark the original used at that exact "
+        "position -- a comma stays a comma, a semicolon stays a semicolon, a colon stays a "
+        "colon. Never upgrade a comma to a semicolon, never downgrade a semicolon to a comma, "
+        "never invent a mark that wasn't there -- even if a different mark would read as more "
+        "'grammatically correct' on its own; matching the ORIGINAL's actual punctuation is the "
+        "whole point, since a student compares the two side by side to learn how that "
+        "punctuation is meant to work. If the clauses also repeat the same grammatical "
+        "pattern (like the same opening word/phrase starting each one, as in \"whenever X; "
+        "whenever Y; whenever Z\"), every clause in the rewrite must keep following that SAME "
+        "pattern, not just the first one. Simplify the WORDS inside each clause freely; never "
+        "simplify away the clause structure or its punctuation. Before you finalize your "
+        "answer, re-read your own rewrite clause by clause against the original, checking both "
+        "the pattern AND the exact punctuation mark at each join, and fix anything that "
+        "doesn't match. Call the assess_and_simplify tool."
     )
     # Same bounded client (timeout/max_retries set once in
     # _get_anthropic_client()) and the same logged-then-re-raised

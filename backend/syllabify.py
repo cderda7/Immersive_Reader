@@ -65,16 +65,19 @@ above, but from reading real book text (Moby Dick ch. 1) and catching a
 miss the frequency list alone didn't surface.
 
 PUNCTUATION-ONLY TOKENS (e.g. a bare "--" used as a parenthetical aside, or
-the standalone "-" that the en/em-dash mapping above produces) are never
-emitted as their own syllable/"word" -- see the `pending_prefix` handling
-in syllabify() below. A token with no word characters at all has nothing
-for _WORD_RE's lead/trail groups to attach to, so rendering it standalone
-would make it look and advance like a real syllable when it isn't one.
-Instead its text is carried forward and prepended onto the NEXT real
-word's leading edge (so it reads attached to the syllable that follows
-it, the same direction a reader's eye carries a mid-sentence dash) or, if
-nothing follows it in the paragraph, appended onto the END of the last
-syllable already emitted, so it's never silently dropped either way.
+the standalone "-" that the en/em-dash mapping above produces) ARE still
+emitted as their own "word" entry, with ordinary spacing on both sides --
+that's what makes "ago - never" read the same shape as the source text,
+rather than gluing the dash onto its neighbor. What they DON'T get is a
+real reading stop: each such entry is tagged `is_standalone_punctuation`
+(see the `Syllable` dataclass), which useReadingState.ts's
+findNextIndex/findPreviousIndex treat as something to skip clean over in
+word and syllable advance mode -- so pressing space on "ago" lands
+directly on "never", never pausing the highlight on the dash sitting
+between them. A REAL hyphenated compound word ("Sword-Fish") never gets
+this tag -- its hyphen sits between two \\w runs, so _WORD_RE's `core`
+group always captures something there, taking the normal per-word branch
+below instead.
 """
 
 import re
@@ -225,6 +228,16 @@ class Syllable:
     syllable_idx: int
     is_first_in_word: bool
     is_last_in_word: bool
+    # True only for a "word" entry that's pure punctuation with no letters
+    # of its own (a standalone mid-sentence dash -- see the module
+    # docstring's PUNCTUATION-ONLY TOKENS section). Real words, including
+    # ones carrying leading/trailing punctuation like "(dog." or a real
+    # hyphenated compound like "Sword-Fish", are always False here.
+    # Defaults to False so any other Syllable(...) call site (there are
+    # none today, but see backend/word_info.py's simplify_sentence, which
+    # currently reuses this same syllabify() pipeline) doesn't need to be
+    # touched just because this field was added.
+    is_standalone_punctuation: bool = False
 
 
 def _normalize_punctuation(text: str) -> str:
@@ -352,12 +365,6 @@ def syllabify(passage: str) -> list[dict]:
     flat: list[Syllable] = []
     for p_idx, paragraph in enumerate(paragraphs):
         w_idx = 0
-        # Holds punctuation-only tokens (see module docstring) until the
-        # next real word shows up to attach them to. Scoped per-paragraph
-        # (not per-sentence) since a stray dash could in principle be the
-        # last token _split_sentences hands back for one sentence, with
-        # the actual next word starting the following sentence.
-        pending_prefix = ""
         for sent_idx, sentence in enumerate(_split_sentences(paragraph)):
             for token in sentence.split():
                 match = _WORD_RE.match(token)
@@ -366,15 +373,25 @@ def syllabify(passage: str) -> list[dict]:
                 if not core:
                     # Whole token is punctuation (e.g. the standalone "-"
                     # left over from em/en-dash normalization, or a bare
-                    # "--" aside) -- hold it rather than emit it as its
-                    # own fake "word"; it gets prepended onto the next
-                    # real word's leading edge below.
-                    pending_prefix += lead + trail
+                    # "--" aside) -- emit it as its own "word" entry (see
+                    # module docstring's PUNCTUATION-ONLY TOKENS section),
+                    # tagged is_standalone_punctuation so the frontend
+                    # skips it as a reading stop without changing how it's
+                    # spaced/rendered.
+                    flat.append(
+                        Syllable(
+                            text=lead + trail,
+                            paragraph_idx=p_idx,
+                            sentence_idx=sent_idx,
+                            word_idx=w_idx,
+                            syllable_idx=0,
+                            is_first_in_word=True,
+                            is_last_in_word=True,
+                            is_standalone_punctuation=True,
+                        )
+                    )
+                    w_idx += 1
                     continue
-
-                if pending_prefix:
-                    lead = pending_prefix + lead
-                    pending_prefix = ""
 
                 syl_parts = _syllabify_word(core)
 
@@ -397,11 +414,5 @@ def syllabify(passage: str) -> list[dict]:
                         )
                     )
                 w_idx += 1
-
-        if pending_prefix and flat:
-            # Nothing followed this punctuation anywhere else in the
-            # paragraph -- attach it to the end of the last syllable
-            # already emitted instead of dropping it silently.
-            flat[-1].text += pending_prefix
 
     return [asdict(s) for s in flat]

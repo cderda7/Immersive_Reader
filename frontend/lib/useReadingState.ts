@@ -39,21 +39,50 @@ type SentenceRef = { paragraphIdx: number; sentenceIdx: number } | null;
 // tiersFor().
 export type AdvanceMode = "syllable" | "word" | "sentence" | "paragraph";
 
+// A standalone mid-sentence dash (see backend/syllabify.py's
+// is_standalone_punctuation) renders and spaces exactly like a real word
+// -- "ago - never" -- but was never actually a word a student was reading,
+// so it should never be somewhere word/syllable advance can land or pause
+// the highlight. Both findNextIndex and findPreviousIndex treat it as
+// something to step clean over, in either direction.
+function isSkippableUnit(syllable: Syllable | undefined): boolean {
+  return !!syllable && syllable.is_standalone_punctuation === true;
+}
+
 // Finds the flat-list index of the START of the next unit at the given
 // granularity, scanning forward from currentIndex. Syllable mode is the
 // simple case (just the next array slot, wrapping at the end); the other
 // three modes scan for the next entry whose relevant *_idx differs from
 // the current one's -- which, because the flat list is sorted
 // (paragraph, sentence, word, syllable), is guaranteed to land exactly
-// on that next unit's first syllable, not somewhere in its middle.
-// Wraps to 0 (start of the passage) if nothing further differs, matching
-// syllable mode's modulo wraparound.
+// on that next unit's first syllable, not somewhere in its middle. Either
+// way, a standalone-punctuation entry (see isSkippableUnit) is never a
+// valid landing spot -- it's skipped in favor of whatever real unit comes
+// after it. Wraps to the start of the passage (first non-skippable entry)
+// if nothing further differs/qualifies, matching syllable mode's modulo
+// wraparound.
 function findNextIndex(syllables: Syllable[], currentIndex: number, mode: AdvanceMode): number {
-  if (mode === "syllable") return (currentIndex + 1) % Math.max(syllables.length, 1);
+  const n = syllables.length;
+  if (n === 0) return 0;
+
+  if (mode === "syllable") {
+    for (let step = 1; step <= n; step++) {
+      const i = (currentIndex + step) % n;
+      if (!isSkippableUnit(syllables[i])) return i;
+    }
+    return currentIndex;
+  }
+
   const current = syllables[currentIndex];
   if (!current) return 0;
-  for (let i = currentIndex + 1; i < syllables.length; i++) {
-    if (unitDiffers(syllables[i], current, mode)) return i;
+  for (let i = currentIndex + 1; i < n; i++) {
+    if (unitDiffers(syllables[i], current, mode) && !isSkippableUnit(syllables[i])) return i;
+  }
+  // Wrapped past the end without finding one -- fall back to the start of
+  // the passage, same as before, but still skipping a leading standalone
+  // dash if the passage happened to start with one.
+  for (let i = 0; i < n; i++) {
+    if (!isSkippableUnit(syllables[i])) return i;
   }
   return 0;
 }
@@ -81,9 +110,20 @@ function unitDiffers(a: Syllable, b: Syllable, mode: AdvanceMode): boolean {
 // Clamps at 0 rather than wrapping to the passage's last unit -- unlike
 // forward's wraparound (a convenience for looping the short demo
 // passage), wrapping backward past the beginning to the end of a whole
-// book chapter would be disorienting, not useful.
+// book chapter would be disorienting, not useful. Same as findNextIndex,
+// a standalone-punctuation entry (see isSkippableUnit) is never a valid
+// landing spot -- if the previous unit found is one, this keeps walking
+// further back for the next real one instead.
 function findPreviousIndex(syllables: Syllable[], currentIndex: number, mode: AdvanceMode): number {
-  if (mode === "syllable") return Math.max(currentIndex - 1, 0);
+  if (mode === "syllable") {
+    let i = currentIndex;
+    while (i > 0) {
+      i--;
+      if (!isSkippableUnit(syllables[i])) return i;
+    }
+    return 0;
+  }
+
   const current = syllables[currentIndex];
   if (!current) return 0;
 
@@ -94,13 +134,19 @@ function findPreviousIndex(syllables: Syllable[], currentIndex: number, mode: Ad
   }
   if (unitStart === 0) return 0;
 
-  // Then walk back one more unit from just before that start.
-  const prevReference = syllables[unitStart - 1];
-  let prevStart = unitStart - 1;
-  while (prevStart > 0 && !unitDiffers(syllables[prevStart - 1], prevReference, mode)) {
-    prevStart--;
+  // Then walk back one more unit from just before that start, skipping
+  // over any further units that turn out to be standalone punctuation.
+  let boundary = unitStart;
+  while (boundary > 0) {
+    const prevReference = syllables[boundary - 1];
+    let prevStart = boundary - 1;
+    while (prevStart > 0 && !unitDiffers(syllables[prevStart - 1], prevReference, mode)) {
+      prevStart--;
+    }
+    if (!isSkippableUnit(syllables[prevStart])) return prevStart;
+    boundary = prevStart;
   }
-  return prevStart;
+  return 0;
 }
 
 export function useReadingState() {
@@ -141,11 +187,13 @@ export function useReadingState() {
   }, []);
   const breathErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  // Paragraph is the coarsest granularity and the friendliest default for
-  // a first-time student (fewer, bigger pauses before they've found their
-  // footing with the controls) -- they can drop down to sentence/word/
-  // syllable from the control bar once they're ready to slow down.
-  const [advanceMode, setAdvanceMode] = useState<AdvanceMode>("paragraph");
+  // Word is the default granularity -- product direction: most students
+  // land here needing help at the word level, not the paragraph level: a
+  // pace that pauses on every word without forcing syllable-by-syllable
+  // slowdown too. They can drop down to syllable, or back up to
+  // sentence/paragraph, from the control bar once they know what they
+  // need.
+  const [advanceMode, setAdvanceMode] = useState<AdvanceMode>("word");
 
   const [textSize, setTextSize] = useState(18);
   const [letterSpacing, setLetterSpacing] = useState(0);
@@ -304,9 +352,23 @@ export function useReadingState() {
   const jumpToWord = useCallback(
     (paragraphIdx: number, wordIdx: number) => {
       cancelPause();
-      const target = syllables.findIndex(
+      let target = syllables.findIndex(
         (s) => s.paragraph_idx === paragraphIdx && s.word_idx === wordIdx && s.is_first_in_word
       );
+      // A standalone mid-sentence dash (see isSkippableUnit) still renders
+      // with its own hoverable/tappable word chip -- same as it always
+      // has -- so it's still possible to land here via a JUMP HERE click
+      // on it specifically. Reading position should never actually stop
+      // there, though (same rule findNextIndex/findPreviousIndex enforce
+      // for spacebar advance), so nudge forward to the next real word.
+      if (target !== -1 && isSkippableUnit(syllables[target])) {
+        for (let i = target + 1; i < syllables.length; i++) {
+          if (syllables[i].is_first_in_word && !isSkippableUnit(syllables[i])) {
+            target = i;
+            break;
+          }
+        }
+      }
       if (target !== -1) setCurrentIndex(target);
     },
     [syllables, cancelPause]

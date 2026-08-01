@@ -13,6 +13,17 @@ export interface Syllable {
   syllable_idx: number;
   is_first_in_word: boolean;
   is_last_in_word: boolean;
+  // True only for a "word" entry that's pure punctuation with no letters
+  // of its own -- a standalone mid-sentence dash left over from an em/en
+  // dash in the source text (see backend/syllabify.py's module docstring,
+  // PUNCTUATION-ONLY TOKENS). It still renders and spaces exactly like a
+  // real word ("ago - never"); this flag is what tells
+  // useReadingState.ts's findNextIndex/findPreviousIndex to skip it as a
+  // reading stop, so word/syllable advance jumps straight from "ago" to
+  // "never" without ever pausing the highlight on the dash. Optional (not
+  // required) so sampleData.ts's hand-written placeholder syllables,
+  // which contain no such tokens, don't need to set it on every entry.
+  is_standalone_punctuation?: boolean;
 }
 
 // syllables grouped back into paragraphs -> words, for rendering only.
