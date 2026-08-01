@@ -1241,10 +1241,21 @@ def simplify_sentence(sentence: str, grade_level: int) -> dict:
     # exception handling as _generate_enrichment above, so a flaky
     # connection fails fast into main.py's CORS-safe 502 handler instead
     # of hanging silently.
+    #
+    # temperature=0: without this, the API's default sampling temperature
+    # applies, which means the SAME sentence can flip between
+    # needs_simplification true/false from one call to the next -- observed
+    # directly (a borderline sentence simplified once, then came back "No
+    # simplified sentence available" on a later, otherwise-identical call).
+    # This is a binary judgment call, not creative writing, so there's no
+    # upside to letting it sample randomly; pinning temperature to 0 makes
+    # the model pick its single most-likely answer every time instead of
+    # occasionally rolling a different one.
     try:
         response = client.messages.create(
             model="claude-haiku-4-5",
             max_tokens=384,
+            temperature=0,
             tools=[_assess_and_simplify_tool(grade_level)],
             tool_choice={"type": "tool", "name": "assess_and_simplify"},
             messages=[{"role": "user", "content": prompt}],
