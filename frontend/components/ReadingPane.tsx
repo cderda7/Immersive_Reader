@@ -601,6 +601,21 @@ export function ReadingPane({
                                 <button
                                   type="button"
                                   className="jump-here-btn"
+                                  // Suppress the browser's default "focus this
+                                  // element on click" behavior -- without this,
+                                  // clicking this button steals DOM keyboard
+                                  // focus from .reading-pane, and the instant
+                                  // it's removed (onClick below clears
+                                  // hoveredWordKey, unmounting this whole row),
+                                  // focus is stranded on <body>. The reading
+                                  // pane's own onKeyDown (Space -> advance)
+                                  // only fires while IT holds focus -- once
+                                  // focus is on <body> instead, the very next
+                                  // Space press falls through to the browser's
+                                  // native page-scroll instead of advancing
+                                  // reading position. Same fix, same reasoning,
+                                  // as WordInfoPopover.tsx's own buttons.
+                                  onMouseDown={(e) => e.preventDefault()}
                                   // Both the word span above and this chip live
                                   // inside the same .reading-word-wrap, so a
                                   // click here never also bubbles into a
@@ -632,23 +647,17 @@ export function ReadingPane({
                                   <button
                                     type="button"
                                     className="simplify-sentence-btn"
-                                    // Mirrors jump-here-btn's onClick above:
-                                    // clear the hover state (so the row doesn't
-                                    // linger stale once the focus view takes
-                                    // over the whole screen) and briefly
-                                    // suppress the synthetic re-hover Chrome
-                                    // fires for whatever's now topmost under a
-                                    // stationary cursor once this row unmounts
-                                    // -- same suppressHoverRef reasoning as
-                                    // JUMP HERE's own click handler. Does NOT
-                                    // clear hoveredWordKey the instant it's
-                                    // clicked anymore (unlike JUMP HERE) --
-                                    // this row needs to stay anchored here
-                                    // through the pending fetch so it can
-                                    // swap to the "no simplified sentence
-                                    // available" message above in place if
-                                    // that's how it resolves; see
-                                    // useTapWord.ts's openSimplifyFocusForWord.
+                                    // Same focus-stealing fix as jump-here-btn
+                                    // above, same reasoning -- see its comment.
+                                    onMouseDown={(e) => e.preventDefault()}
+                                    // Does NOT clear hoveredWordKey the instant
+                                    // it's clicked (unlike JUMP HERE) -- this
+                                    // row needs to stay anchored here through
+                                    // the pending fetch so it can swap to the
+                                    // "no simplified sentence available"
+                                    // message above in place if that's how it
+                                    // resolves; see useTapWord.ts's
+                                    // openSimplifyFocusForWord.
                                     onClick={() => {
                                       const wordText = sylList.map((s) => s.text).join("");
                                       const sentenceText = getSentenceText(words, run.sentenceIdx as number);
