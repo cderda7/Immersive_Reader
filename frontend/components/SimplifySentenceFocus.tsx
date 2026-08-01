@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { AdvanceMode } from "@/lib/useReadingState";
 import type { SimplifiedSentence } from "@/lib/useTapWord";
 import type { SentenceFocusContext, Syllable } from "@/lib/types";
@@ -28,84 +28,172 @@ interface SimplifySentenceFocusProps {
   onExitContinue: () => void;
 }
 
-// One syllable, tagged with which SEGMENT of which sentence it belongs
-// to -- "SA" (original) or "SB" (simplified), per product naming, plus a
-// 0-based `segment` index within that sentence's own split (see
-// splitIntoParts below). Together (phase, segment) is what lets this
-// view reuse the exact same next/previous-unit resolution logic
-// useReadingState.ts uses for the main passage (see unitDiffers/findNext/
-// findPreviousFocusIndex below), just with a segment standing in for
-// that hook's (paragraph_idx, sentence_idx) -- a segment boundary always
-// counts as a new "unit" at sentence/paragraph granularity, exactly like
-// a sentence boundary does there.
+// One syllable, tagged with which SIDE it belongs to -- "SA" (original)
+// or "SB" (simplified), per product naming, plus a 0-based `segment`
+// index within that sentence's own CLAUSE split (see splitIntoClauses
+// below). Together (phase, segment) is what lets this view reuse the
+// exact same next/previous-unit resolution logic useReadingState.ts uses
+// for the main passage (see unitDiffers/findNext/findPreviousFocusIndex
+// below), just with a clause standing in for that hook's (paragraph_idx,
+// sentence_idx) -- a clause boundary always counts as a new "unit" at
+// sentence/paragraph granularity, exactly like a sentence boundary does
+// there.
 interface FocusUnit extends Syllable {
   phase: "original" | "simplified";
   segment: number;
 }
 
-// A really long sentence squeezed onto one scaled-down line reads as
-// illegibly tiny (FitLine has no floor on how far it'll shrink) --
-// splitting it into 2-3 pieces near each natural third/half keeps every
-// line readable at a reasonable size instead of shrinking arbitrarily
-// far. Thresholds are on WORD count (a sentence's rendered width isn't
-// known until after layout) -- generous enough an ordinary sentence
-// never gets split, but a genuine run-on (Moby Dick's "Whenever I find
-// myself..." is ~90 words) gets real relief.
-function targetPartCount(wordCount: number): number {
-  if (wordCount > 20) return 3;
-  if (wordCount > 10) return 2;
-  return 1;
+// One line to render in the middle third -- SA1, SB1, SA2, SB2, ... (SA =
+// original, SB = simplified/"translation"), one pair per CLAUSE (see
+// splitIntoClauses below). `dashPrefix` is set (to the actual dash
+// character used) on a simplified line whose ORIGINAL counterpart clause
+// opens with a leading dash but whose own rewritten text doesn't -- see
+// leadingDash/interleaveSegments below.
+interface SegmentLine {
+  phase: "original" | "simplified";
+  segment: number;
+  words: Syllable[][];
+  dashPrefix?: string;
 }
 
-// Trailing punctuation that makes a reasonable place to break a sentence
-// -- mid-sentence pauses (comma, semicolon, colon, dash), deliberately
-// excluding '.'/'?'/'!' (there shouldn't be one mid-sentence, but this
-// guards against ever treating a real sentence-ending period as a split
-// point if one slipped in).
-const BREAK_CHARS = /[,;:—–-]$/;
+// Whether `words` opens with a leading dash ("- some clause...", a
+// dash-led list item), and if so, which dash character it uses. Some
+// passages format a clause this way; when the ORIGINAL clause at a given
+// index opens with one, its simplified counterpart should too, even
+// though a rewrite is free to change everything else about the wording
+// -- the leading dash is part of the sentence's STRUCTURE, same category
+// as the clause punctuation splitIntoClauses reads, not part of the
+// content a simplification is meant to reword. Checks just the first
+// word's leading character(s) rather than requiring the dash to be its
+// own separate word/token, since either could show up in the syllable
+// data depending on how the passage was authored/syllabified.
+function leadingDash(words: Syllable[][]): string | null {
+  const first = words[0]?.[0];
+  if (!first) return null;
+  const match = /^([-–—])/.exec(first.text);
+  return match ? match[1] : null;
+}
 
-// Minimum words a segment can have -- keeps a boundary from landing right
-// at the very start/end of the sentence and producing a near-empty
-// segment nobody would recognize as its own "part."
+// Clause-ending punctuation that marks a natural STRUCTURAL break inside
+// a sentence -- a semicolon-joined list of parallel clauses ("Some
+// leaning against the spiles; some seated upon the pier-heads; ..."), or
+// a colon introducing one. Deliberately NOT a comma: commas are common
+// enough inside an ordinary single clause (lists, appositives,
+// subordinate clauses) that breaking on every one would fragment normal
+// sentences the same way the old proportional splitter over-fragmented
+// them -- this is for real clause/sentence boundaries, not every pause.
+const CLAUSE_BREAK_CHARS = /[;:]$/;
+
+// Same idea, but for a period -- only counts as a clause break when it's
+// NOT the very last word of the sentence. A plain sentence's own final
+// period isn't a structural break; an INTERNAL period is, which happens
+// when a simplified rewrite turns one semicolon-joined original sentence
+// into several short simple ones ("Some people leaned against the wooden
+// posts. Some sat on the ends of the pier. ..." -- still just one
+// `simplifiedSentence` API-wise, syllabified as a single blob).
+function isClauseBreak(word: Syllable[], isLastWord: boolean): boolean {
+  const lastSyl = word[word.length - 1];
+  if (!lastSyl) return false;
+  if (CLAUSE_BREAK_CHARS.test(lastSyl.text)) return true;
+  return !isLastWord && lastSyl.text.endsWith(".");
+}
+
+// Splits one sentence's words into one segment per CLAUSE, breaking
+// AFTER every word that ends a clause (see isClauseBreak) -- structural
+// punctuation the sentence ALREADY has, not an artificial word-count
+// target. This is what keeps the original's semicolon-separated clauses
+// and the simplified rewrite's period-separated sentences each on their
+// own line, in the SAME relative order, rather than either running
+// together or getting cut apart from its natural boundaries by an
+// unrelated width-based wrap. A sentence with no internal clause
+// punctuation at all comes back as a single segment (still free to wrap
+// across multiple lines on its own -- see .simplify-focus__line-inner in
+// globals.css -- if it's long, just not split into separate clause
+// rows).
+function splitIntoClauses(words: Syllable[][]): Syllable[][][] {
+  const segments: Syllable[][][] = [];
+  let current: Syllable[][] = [];
+  words.forEach((word, i) => {
+    current.push(word);
+    if (isClauseBreak(word, i === words.length - 1)) {
+      segments.push(current);
+      current = [];
+    }
+  });
+  if (current.length > 0) segments.push(current);
+  return segments;
+}
+
+// A softer structural break than isClauseBreak -- just a trailing comma.
+// Used ONLY as a fallback (see splitToClauseCount below) when a
+// simplified rewrite needs to match the ORIGINAL's clause count but
+// doesn't have enough of its own semicolons/colons/internal periods to
+// get there on its own -- a rewrite commonly turns a semicolon-joined
+// original into ONE flowing, comma-joined sentence instead of keeping
+// the original's stronger punctuation (exactly what happens turning
+// "whenever X; whenever Y; ..." into "whenever X, whenever Y, ..."). Not
+// part of splitIntoClauses/isClauseBreak itself -- see that function's
+// own comment on why an ordinary comma is too common inside a single
+// clause to trust as a structural signal on its own; it's only safe to
+// reach for here because the TARGET COUNT is already fixed by the
+// original, so there's a known number of real breaks to look for instead
+// of guessing how many a comma alone implies.
+function isSoftBreak(word: Syllable[]): boolean {
+  const lastSyl = word[word.length - 1];
+  return !!lastSyl && lastSyl.text.endsWith(",");
+}
+
+// Finds the word-boundary index (the index one past a candidate word)
+// nearest `ideal`, searching outward in both directions at once, whose
+// word satisfies `test` and isn't already in `existing`. Returns null if
+// nothing satisfies `test` anywhere in the sentence. Boundary `idx` sits
+// after word `idx - 1`, so idx ranges from MIN_SEGMENT_WORDS to
+// `words.length - MIN_SEGMENT_WORDS` -- same margin splitIntoClauses'
+// old proportional predecessor used, to keep a boundary from landing
+// right at the very start/end and producing a near-empty piece.
 const MIN_SEGMENT_WORDS = 2;
-
-// Finds the word index closest to `ideal` (searching outward in both
-// directions at once) whose word ends in one of BREAK_CHARS, skipping any
-// index already chosen for an earlier boundary. Falls back to `ideal`
-// itself (clamped into a valid range) if nothing suitable exists anywhere
-// in the sentence -- a blunt word-count split beats not splitting a
-// 90-word sentence at all.
-function findNearestBreak(words: Syllable[][], ideal: number, existing: number[]): number {
-  const w = words.length;
+function findNearestMatch(
+  words: Syllable[][],
+  ideal: number,
+  existing: number[],
+  test: (word: Syllable[]) => boolean
+): number | null {
   const lo = MIN_SEGMENT_WORDS;
-  const hi = Math.max(w - MIN_SEGMENT_WORDS, lo);
-  for (let radius = 0; radius <= w; radius++) {
+  const hi = Math.max(words.length - MIN_SEGMENT_WORDS, lo);
+  for (let radius = 0; radius <= words.length; radius++) {
     const candidates = radius === 0 ? [ideal] : [ideal - radius, ideal + radius];
     for (const idx of candidates) {
       if (idx < lo || idx > hi || existing.includes(idx)) continue;
-      const lastWord = words[idx - 1];
-      const lastSyl = lastWord?.[lastWord.length - 1];
-      if (lastSyl && BREAK_CHARS.test(lastSyl.text)) return idx;
+      if (test(words[idx - 1])) return idx;
     }
   }
-  return Math.min(Math.max(ideal, lo), hi);
+  return null;
 }
 
-// Splits one sentence's words into `targetParts` segments, breaking at
-// punctuation nearest each ideal proportional boundary (see
-// findNearestBreak) -- e.g. targetParts=3 aims for breaks near the 1/3
-// and 2/3 marks. Returns fewer parts than requested (down to just 1) if
-// the sentence is too short to support that many MIN_SEGMENT_WORDS-sized
-// pieces -- a short simplified rewrite of a long original shouldn't be
-// forced into artificial slices it doesn't need.
-function splitIntoParts(words: Syllable[][], targetParts: number): Syllable[][][] {
-  if (targetParts <= 1 || words.length < targetParts * MIN_SEGMENT_WORDS) {
+// Splits `words` into EXACTLY `targetCount` segments (fewer only if the
+// sentence is too short to support that many non-trivial pieces) --
+// unlike splitIntoClauses above, which only breaks where the sentence's
+// OWN punctuation says to and can come back with fewer pieces than that,
+// this is for the specific case where a simplified rewrite needs to
+// MATCH the original's clause count (see the FORMATTING RULE on
+// simplifiedSegments below) but didn't naturally produce enough clause
+// breaks of its own to get there. For each of the `targetCount - 1`
+// breaks needed, prefers a REAL strong clause break (isClauseBreak)
+// nearest that ideal proportional position, falls back to a softer comma
+// (isSoftBreak) nearest the same position if no strong one is anywhere
+// in the sentence, and only falls back to the bare ideal position itself
+// (a blunt word-count cut) if the sentence has neither -- always prefers
+// punctuation the text already has over an arbitrary cut, in that order.
+function splitToClauseCount(words: Syllable[][], targetCount: number): Syllable[][][] {
+  if (targetCount <= 1 || words.length < targetCount * MIN_SEGMENT_WORDS) {
     return [words];
   }
   const boundaries: number[] = [];
-  for (let k = 1; k < targetParts; k++) {
-    const ideal = Math.round((words.length * k) / targetParts);
-    boundaries.push(findNearestBreak(words, ideal, boundaries));
+  for (let k = 1; k < targetCount; k++) {
+    const ideal = Math.round((words.length * k) / targetCount);
+    const strong = findNearestMatch(words, ideal, boundaries, (w) => isClauseBreak(w, false));
+    const soft = strong ?? findNearestMatch(words, ideal, boundaries, isSoftBreak);
+    boundaries.push(soft ?? Math.min(Math.max(ideal, MIN_SEGMENT_WORDS), words.length - MIN_SEGMENT_WORDS));
   }
   const sorted = [...new Set(boundaries)].sort((a, b) => a - b);
   const segments: Syllable[][][] = [];
@@ -118,27 +206,71 @@ function splitIntoParts(words: Syllable[][], targetParts: number): Syllable[][][
   return segments;
 }
 
-// One line to render in the middle third -- SA1, SB1, SA2, SB2, ... (SA =
-// original, SB = simplified/"translation").
-interface SegmentLine {
-  phase: "original" | "simplified";
-  segment: number;
-  words: Syllable[][];
+// The clause-JOINING punctuation character a NON-FINAL clause segment
+// ends in -- ';', ':', or ',' -- or null if (unusually) it doesn't end
+// that way. Deliberately excludes '.': a period at the end of the LAST
+// segment is how the sentence ITSELF ends, not a joining mark between
+// clauses, and this is only ever called on non-final segments anyway
+// (see withMatchingJoiningPunct below).
+function joiningPunct(segment: Syllable[][]): string | null {
+  const lastWord = segment[segment.length - 1];
+  const lastSyl = lastWord?.[lastWord.length - 1];
+  if (!lastSyl) return null;
+  const match = /([;:,])$/.exec(lastSyl.text);
+  return match ? match[1] : null;
 }
 
-// Interleaves the two sentences' segments as SA1, SB1, SA2, SB2, ... --
-// original then simplified for each matching part, per product
-// direction, so the student compares one small chunk at a time instead
-// of re-reading a whole sentence to find the corresponding piece later
-// on. A side that ran out of segments (its sentence was too short to
-// need as many parts as the other) is simply skipped for that index
-// rather than padded with something empty.
+// Rewrites a clause segment's own trailing joining-punctuation character
+// (if any) to `desiredPunct`, returning a NEW segment (shallow-copied
+// down to the one changed syllable) rather than mutating the source --
+// word_idx/syllable_idx, what advance/highlight logic actually keys off,
+// stay untouched; only the displayed `text` of that one syllable changes.
+// A no-op if `desiredPunct` is null (nothing to match) or already matches.
+function withMatchingJoiningPunct(segment: Syllable[][], desiredPunct: string | null): Syllable[][] {
+  if (!desiredPunct) return segment;
+  const lastWordIdx = segment.length - 1;
+  const lastWord = segment[lastWordIdx];
+  const lastSylIdx = lastWord?.length - 1;
+  const lastSyl = lastWord?.[lastSylIdx];
+  if (!lastSyl) return segment;
+  const newText = lastSyl.text.replace(/[;:,]$/, "") + desiredPunct;
+  if (newText === lastSyl.text) return segment;
+  const newSegment = [...segment];
+  const newWord = [...lastWord];
+  newWord[lastSylIdx] = { ...lastSyl, text: newText };
+  newSegment[lastWordIdx] = newWord;
+  return newSegment;
+}
+
+// Interleaves the two sentences' clause segments as SA1, SB1, SA2, SB2,
+// ... -- original then simplified for each matching clause, per product
+// direction, so the student compares one clause/short-sentence at a time
+// instead of re-reading a whole compound sentence to find the
+// corresponding piece later on. The ORIGINAL's clause count is
+// authoritative -- the caller (see simplifiedSegments below) forces the
+// simplified side to match it via splitToClauseCount whenever its own
+// punctuation alone would produce fewer pieces, so a mismatch here is
+// now the exception rather than the norm; this function still tolerates
+// one (a side simply skipped for that row rather than padded with
+// something empty) for the one direction that's still allowed to vary --
+// a rewrite whose OWN punctuation happens to produce MORE pieces than
+// the original isn't forced down to match, since merging real structure
+// away would lose information the split was trying to preserve. Also
+// carries a simplified line's dashPrefix over from its original
+// counterpart at the SAME index (see leadingDash above) -- comparing
+// same-index clauses here, rather than leaving it to the caller, is what
+// keeps that lookup correct even when the two sides' clause counts don't
+// match.
 function interleaveSegments(originalSegments: Syllable[][][], simplifiedSegments: Syllable[][][]): SegmentLine[] {
   const n = Math.max(originalSegments.length, simplifiedSegments.length);
   const lines: SegmentLine[] = [];
   for (let i = 0; i < n; i++) {
     if (originalSegments[i]?.length) lines.push({ phase: "original", segment: i, words: originalSegments[i] });
-    if (simplifiedSegments[i]?.length) lines.push({ phase: "simplified", segment: i, words: simplifiedSegments[i] });
+    if (simplifiedSegments[i]?.length) {
+      const originalDash = originalSegments[i] ? leadingDash(originalSegments[i]) : null;
+      const dashPrefix = originalDash && !leadingDash(simplifiedSegments[i]) ? originalDash : undefined;
+      lines.push({ phase: "simplified", segment: i, words: simplifiedSegments[i], dashPrefix });
+    }
   }
   return lines;
 }
@@ -156,8 +288,8 @@ function buildCombined(lines: SegmentLine[]): FocusUnit[] {
 }
 
 // Mirrors useReadingState.ts's unitDiffers -- (phase, segment) stands in
-// for that hook's (paragraph_idx, sentence_idx) pair: crossing into a new
-// segment (or from original to simplified or back) always counts as a
+// for that hook's (paragraph_idx, sentence_idx) pair: crossing from the
+// original sentence into the simplified one (or back) always counts as a
 // different unit, coarsest-first, exactly like a paragraph change does
 // there.
 function unitDiffers(a: FocusUnit, b: FocusUnit, mode: AdvanceMode): boolean {
@@ -250,29 +382,70 @@ export function SimplifySentenceFocus({
   const originalWords = useMemo(() => groupIntoWords(originalSyllables), [originalSyllables]);
   const simplifiedWords = useMemo(() => groupIntoWords(simplifiedSyllables), [simplifiedSyllables]);
 
-  // Both sentences split into the SAME number of parts ("mirrored") --
-  // whichever one is longer decides how many parts BOTH get, so a short
-  // simplified rewrite of a long original still lines up piece-for-piece
-  // (SA1/SB1, SA2/SB2, ...) instead of drifting out of sync. See
-  // targetPartCount/splitIntoParts above for how each sentence's own
-  // actual break points are then chosen independently within that shared
-  // part count.
-  const targetParts = useMemo(
-    () =>
-      Math.max(
-        targetPartCount(originalWords.length),
-        hasSimplifiedPhase ? targetPartCount(simplifiedWords.length) : 1
-      ),
-    [originalWords.length, simplifiedWords.length, hasSimplifiedPhase]
-  );
-  const originalSegments = useMemo(
-    () => splitIntoParts(originalWords, targetParts),
-    [originalWords, targetParts]
-  );
-  const simplifiedSegments = useMemo(
-    () => (hasSimplifiedPhase ? splitIntoParts(simplifiedWords, targetParts) : []),
-    [simplifiedWords, targetParts, hasSimplifiedPhase]
-  );
+  // FORMATTING RULE (product direction): FIXED text size, always -- see
+  // .simplify-focus__line-inner in globals.css, which sets one constant
+  // font-size and never shrinks or scales it. Each CLAUSE (see
+  // splitIntoClauses above) renders as an ordinary wrapping block of text
+  // at that fixed size -- a long clause just gets MORE LINES of its own,
+  // via the browser's own line-breaking, which already greedily packs as
+  // many words onto each line as fit before wrapping to the next (the
+  // same algorithm any paragraph of text uses). That's the "greedy fit"
+  // this needs, for free, in one layout pass, with no custom measure/
+  // shrink/grow loop of ours that could over- or under-fragment it --
+  // splitIntoClauses' own job is a DIFFERENT, coarser one (deciding
+  // clause rows from the sentence's actual punctuation, not deciding
+  // where lines wrap within a clause).
+  //
+  // (An earlier version of this view force-fit each sentence onto
+  // exactly one line -- shrinking it with `transform: scale()`, then
+  // splitting it into more same-size pieces when even that got
+  // illegibly small -- which needed real machinery to get right and
+  // still under-packed lines sometimes, since splitting divided words
+  // evenly across pieces rather than packing each line as full as
+  // possible, ignoring the sentence's own structure entirely. Splitting
+  // on actual clause punctuation, then letting each clause wrap on its
+  // own, fixes both problems at once.)
+  const originalSegments = useMemo(() => splitIntoClauses(originalWords), [originalWords]);
+  // The simplified rewrite is free to reword the original however it
+  // likes, but its LINE STRUCTURE should still match the original's --
+  // see splitIntoClauses' own comment on why (comparing one clause/short
+  // sentence at a time, not a whole compound sentence). A rewrite often
+  // doesn't reach for the same strong punctuation the original used to
+  // mark that structure (turning "whenever X; whenever Y; ..." into one
+  // comma-joined "whenever X, whenever Y, ..." sentence is a real
+  // example, not a hypothetical one), so splitIntoClauses alone can come
+  // back with fewer pieces than the original has. Only step in with
+  // splitToClauseCount -- which forces a match by falling back to comma
+  // breaks, and failing that, plain word-position cuts -- when that
+  // happens; if the rewrite's OWN punctuation already produces AT LEAST
+  // as many pieces as the original, trust it as-is (see interleaveSegments'
+  // own comment on why that direction isn't forced).
+  //
+  // FORMATTING RULE (product direction): the simplified sentence's
+  // JOINING punctuation should match the original's, clause for clause --
+  // not just the same NUMBER of clauses, the same MARK. A rewrite that
+  // turns "whenever X; whenever Y; ..." into "whenever X, whenever Y,
+  // ..." has matching structure by count already (handled above), but
+  // still reads as punctuated differently from the original it's meant
+  // to mirror. For every clause but the last (the last one ends the
+  // SENTENCE, not a join to the next clause -- its own terminal
+  // punctuation is left alone), withMatchingJoiningPunct swaps in
+  // whatever character the ORIGINAL clause at that same index used. Only
+  // applies where there IS an original counterpart at that index (a
+  // simplified clause beyond the original's own count -- see the
+  // natural-count branch above -- has no original mark to match, so it's
+  // left as the rewrite wrote it).
+  const simplifiedSegments = useMemo(() => {
+    if (!hasSimplifiedPhase) return [];
+    const natural = splitIntoClauses(simplifiedWords);
+    const matched =
+      natural.length >= originalSegments.length ? natural : splitToClauseCount(simplifiedWords, originalSegments.length);
+    return matched.map((segment, i) => {
+      const isFinal = i === matched.length - 1;
+      if (isFinal) return segment;
+      return withMatchingJoiningPunct(segment, joiningPunct(originalSegments[i] ?? []));
+    });
+  }, [simplifiedWords, hasSimplifiedPhase, originalSegments]);
   const lines = useMemo(
     () => interleaveSegments(originalSegments, simplifiedSegments),
     [originalSegments, simplifiedSegments]
@@ -336,16 +509,6 @@ export function SimplifySentenceFocus({
   }, [onClose]);
 
   const tiers = tiersFor(advanceMode);
-
-  // ONE shared scale per SENTENCE (not per line) -- product direction:
-  // every SA segment should render at the same size as every other SA
-  // segment (and likewise for SB), rather than each line independently
-  // shrinking to its own natural width. Computed as the smallest scale
-  // any single segment in that sentence needs (the most cramped one), then
-  // applied uniformly across all of that sentence's lines -- see
-  // useSharedScale below.
-  const original = useSharedScale(originalSegments.length, originalSegments);
-  const simplified = useSharedScale(simplifiedSegments.length, simplifiedSegments);
 
   return (
     <div className="simplify-focus" role="dialog" aria-label="Simplified sentence" onClick={advance}>
@@ -419,40 +582,37 @@ export function SimplifySentenceFocus({
               {lines.map((line) => {
                 const isCurrentLine = current?.phase === line.phase && current?.segment === line.segment;
                 const isOriginal = line.phase === "original";
-                const side = isOriginal ? original : simplified;
                 return (
                   <FocusLine
                     key={`${line.phase}-${line.segment}`}
                     words={line.words}
+                    dashPrefix={line.dashPrefix ?? null}
                     currentWordIdx={isCurrentLine ? current.word_idx : null}
                     currentSyllableIdx={isCurrentLine ? current.syllable_idx : null}
                     tiers={tiers}
                     variant={line.phase}
                     // Sentence mode has no per-word highlight (see tiersFor
                     // -- word/syllable tiers are both off there), so
-                    // without SOME indicator the current SA/SB segment
+                    // without SOME indicator the current SA/SB clause
                     // would be indistinguishable from the others now that
                     // text color no longer carries that signal either (see
                     // .simplify-focus__line's own comment). Mirrors
                     // ReadingPane.tsx's own sentence-mode convention
                     // exactly: background tint, not text color, carries
                     // "where am I" -- same --tier-word color, just applied
-                    // to a whole segment line here instead of a whole
+                    // to a whole clause block here instead of a whole
                     // sentence there. Paragraph mode intentionally gets no
                     // indicator, same as it does in the main pane.
                     tintCurrent={isCurrentLine && tiers.sentenceStyle === "backgroundTint"}
-                    scale={side.scale}
-                    outerRef={side.outerRef(line.segment)}
-                    innerRef={side.innerRef(line.segment)}
                     // Explicit grid placement (not relying on DOM-order
                     // auto-flow) -- original always column 1, simplified
-                    // always column 2, row = segment index + 1. Needed
-                    // because the two sentences can end up with different
-                    // segment counts (see splitIntoParts/interleaveSegments
-                    // above): auto-flow would shift a later SA segment into
-                    // the simplified column the moment one SB segment goes
+                    // always column 2, row = that clause's own index + 1
+                    // (see splitIntoClauses above). Needed because the two
+                    // sentences can end up with different clause counts:
+                    // auto-flow would shift a later SA clause into the
+                    // simplified column the moment one SB clause goes
                     // missing, since it just fills the next open cell
-                    // rather than respecting which "row" a segment
+                    // rather than respecting which "row" a clause
                     // logically belongs to.
                     gridColumn={isOriginal ? 1 : 2}
                     gridRow={line.segment + 1}
@@ -481,53 +641,50 @@ export function SimplifySentenceFocus({
   );
 }
 
-// One segment line (one SA_n or SB_n -- see splitIntoParts/
-// interleaveSegments), placed into its grid cell and shrunk to fit on a
-// single line via a scale factor computed by useSharedScale (shared
-// across every segment of the SAME sentence, not independently per
-// line), with syllable/word highlighting matching the rest of the app's
-// advance-by granularity (see tiersFor). Both original and simplified
-// lines are always full-color/bold now (see .simplify-focus__line's own
-// comment in globals.css) -- the per-word/syllable highlight (word/
-// syllable mode) or the whole-line background tint (sentence mode, via
-// tintCurrent) are the "current position" indicators, same mechanics the
-// main reading pane itself uses.
+// One sentence's block (SA or SB), placed into its grid cell and left to
+// wrap normally at a fixed size (see .simplify-focus__line-inner and the
+// FORMATTING RULE comment above), with syllable/word highlighting
+// matching the rest of the app's advance-by granularity (see tiersFor).
+// Both original and simplified lines are always full-color/bold now (see
+// .simplify-focus__line's own comment in globals.css) -- the per-word/
+// syllable highlight (word/syllable mode) or the whole-block background
+// tint (sentence mode, via tintCurrent) are the "current position"
+// indicators, same mechanics the main reading pane itself uses.
 function FocusLine({
   words,
+  dashPrefix,
   currentWordIdx,
   currentSyllableIdx,
   tiers,
   variant,
   tintCurrent,
-  scale,
-  outerRef,
-  innerRef,
   gridColumn,
   gridRow,
 }: {
   words: Syllable[][];
+  // Set only on a simplified clause whose original counterpart opens
+  // with a dash but whose own (rewritten) text doesn't -- see
+  // leadingDash/interleaveSegments above. Rendered as plain text, not
+  // wired into currentWordIdx/currentSyllableIdx, since it isn't backed
+  // by real syllable data of its own -- it's a structural echo of the
+  // original, not content of this sentence to advance through or
+  // highlight.
+  dashPrefix: string | null;
   currentWordIdx: number | null;
   currentSyllableIdx: number | null;
   tiers: { word: boolean; syllable: boolean };
   variant: "simplified" | "original";
   tintCurrent: boolean;
-  scale: number;
-  outerRef: (el: HTMLDivElement | null) => void;
-  innerRef: (el: HTMLDivElement | null) => void;
   gridColumn: number;
   gridRow: number;
 }) {
   return (
     <div
-      ref={outerRef}
       className={`simplify-focus__line simplify-focus__line--${variant}${tintCurrent ? " simplify-focus__line--current" : ""}`}
       style={{ gridColumn, gridRow }}
     >
-      <div
-        ref={innerRef}
-        className="simplify-focus__line-inner"
-        style={{ transform: `scale(${scale})` }}
-      >
+      <div className="simplify-focus__line-inner">
+        {dashPrefix && <span className="simplify-focus__dash-prefix">{dashPrefix} </span>}
         {words.map((sylList, wordIdx) => {
           const isCurrentWord = currentWordIdx !== null && sylList[0]?.word_idx === currentWordIdx;
           return (
@@ -552,85 +709,4 @@ function FocusLine({
       </div>
     </div>
   );
-}
-
-// One shared scale factor across ALL `count` segments of a single
-// sentence (original or simplified), rather than each segment
-// independently fitting itself to its own natural width the way the old
-// FitLine did -- product direction: every SA segment should render at
-// the same size as every other SA segment, so the eye doesn't have to
-// keep readjusting between segments (and likewise, independently, for
-// SB). Computed as the SMALLEST scale any single segment in the set
-// needs (the most cramped one) via the same scrollWidth (natural,
-// transform-unaffected) vs clientWidth (available) comparison FitLine
-// used, just maxed across every segment instead of one.
-//
-// Returns ref-callback FACTORY functions (outerRef(i)/innerRef(i))
-// rather than plain refs, since the caller doesn't know how many
-// segments there are until render time and each segment needs its own
-// stable identity to attach to -- the factories are memoized per index
-// in a Map so the SAME function instance is reused across re-renders
-// (a fresh callback on every render would fire spurious detach/attach
-// cycles on unrelated re-renders).
-interface SharedScale {
-  scale: number;
-  outerRef: (index: number) => (el: HTMLDivElement | null) => void;
-  innerRef: (index: number) => (el: HTMLDivElement | null) => void;
-}
-
-function useSharedScale(count: number, watchKey: unknown): SharedScale {
-  const outerEls = useRef<(HTMLDivElement | null)[]>([]);
-  const innerEls = useRef<(HTMLDivElement | null)[]>([]);
-  const outerRefFns = useRef<Map<number, (el: HTMLDivElement | null) => void>>(new Map());
-  const innerRefFns = useRef<Map<number, (el: HTMLDivElement | null) => void>>(new Map());
-  const [scale, setScale] = useState(1);
-
-  // Depends on `count` and `watchKey` (the segment arrays themselves --
-  // new sentence, new split) rather than running on every render like
-  // FitLine did, since this now also needs to re-run after the ref
-  // callbacks below have attached every segment in the set, not just one.
-  useLayoutEffect(() => {
-    function recompute() {
-      let minScale = 1;
-      for (let i = 0; i < count; i++) {
-        const outer = outerEls.current[i];
-        const inner = innerEls.current[i];
-        if (!outer || !inner) continue;
-        const naturalWidth = inner.scrollWidth;
-        const available = outer.clientWidth;
-        if (naturalWidth > available && naturalWidth > 0) {
-          minScale = Math.min(minScale, available / naturalWidth);
-        }
-      }
-      setScale(minScale);
-    }
-    recompute();
-    window.addEventListener("resize", recompute);
-    return () => window.removeEventListener("resize", recompute);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [count, watchKey]);
-
-  function outerRef(index: number) {
-    let fn = outerRefFns.current.get(index);
-    if (!fn) {
-      fn = (el) => {
-        outerEls.current[index] = el;
-      };
-      outerRefFns.current.set(index, fn);
-    }
-    return fn;
-  }
-
-  function innerRef(index: number) {
-    let fn = innerRefFns.current.get(index);
-    if (!fn) {
-      fn = (el) => {
-        innerEls.current[index] = el;
-      };
-      innerRefFns.current.set(index, fn);
-    }
-    return fn;
-  }
-
-  return { scale, outerRef, innerRef };
 }
