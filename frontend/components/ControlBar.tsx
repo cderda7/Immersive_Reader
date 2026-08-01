@@ -70,6 +70,21 @@ export function ControlBar({
               role="radio"
               aria-checked={advanceMode === value}
               className={`advance-mode-btn${advanceMode === value ? " advance-mode-btn--active" : ""}`}
+              // Suppress the browser's default "focus this element on
+              // click" behavior. Without this, clicking a mode button
+              // (e.g. switching syllable -> word) leaves DOM keyboard
+              // focus sitting ON THAT BUTTON -- unlike JUMP HERE
+              // (ReadingPane.tsx), this button doesn't unmount afterward,
+              // so focus doesn't even get stranded on <body>, it just
+              // stays right here. .reading-pane's own Space-advances
+              // handler only fires while IT holds focus; with focus on
+              // this button instead, the very next Space press just
+              // re-activates THIS button natively (a harmless no-op re-
+              // click, since it's already the active mode) instead of
+              // ever reaching the reading pane at all. Same fix, same
+              // reasoning, as ReadingPane.tsx's JUMP HERE/SIMPLIFY
+              // SENTENCE buttons.
+              onMouseDown={(e) => e.preventDefault()}
               onClick={() => setAdvanceMode(value)}
             >
               {label}
@@ -104,11 +119,26 @@ function StepperGroup({
   return (
     <div className="control-group">
       <span className="control-label">{label}</span>
-      <button className="ctrl-btn" aria-label={`Decrease ${label}`} onClick={onDown}>
+      {/* onMouseDown preventDefault on both buttons below -- same
+          focus-stealing fix as the ADVANCE BY buttons above (see that
+          comment for the full reasoning): without it, clicking A-/A+ or
+          a spacing stepper leaves Space presses hitting this button
+          instead of the reading pane's advance handler. */}
+      <button
+        className="ctrl-btn"
+        aria-label={`Decrease ${label}`}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onDown}
+      >
         {downLabel}
       </button>
       <span className="ctrl-value">{display}</span>
-      <button className="ctrl-btn" aria-label={`Increase ${label}`} onClick={onUp}>
+      <button
+        className="ctrl-btn"
+        aria-label={`Increase ${label}`}
+        onMouseDown={(e) => e.preventDefault()}
+        onClick={onUp}
+      >
         {upLabel}
       </button>
     </div>
