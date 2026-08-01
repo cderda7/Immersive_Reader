@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import type { ActiveWord, TapWordStage } from "@/lib/useTapWord";
+import type { ActiveWord, SimplifiedSentence, TapWordStage } from "@/lib/useTapWord";
 import type { WordInfo } from "@/lib/types";
 
 interface WordInfoPopoverProps {
@@ -17,6 +17,21 @@ interface WordInfoPopoverProps {
   onClose: () => void;
   onAdvance: () => void;
   onReplayAudio: () => void;
+  // "Simplify sentence" -- independent of the stage cycle above, see
+  // useTapWord.ts's simplifySentence. Available the instant the card
+  // opens, not gated behind wordInfo/isLoading/error the way the stage
+  // content is, since it only needs activeWord.sentenceText.
+  simplifiedSentence: SimplifiedSentence | null;
+  isSimplifying: boolean;
+  simplifyError: string | null;
+  onSimplifySentence: () => void;
+  // Surrounding context (see lib/types.ts's neighboringSentenceText) --
+  // shown alongside the simplified comparison once it's requested, so a
+  // student can place the simplified wording back into the flow of the
+  // passage instead of judging it in isolation. null when the tapped
+  // sentence is the very first/last one in the passage.
+  prevSentenceText: string | null;
+  nextSentenceText: string | null;
   // Shared with ReadingPane -- see ReadingScreen's comment where this is
   // created. NOT a local Set here on purpose: a fresh, empty Set at
   // mount time would have no way to know Space/ArrowRight was already
@@ -54,6 +69,12 @@ export function WordInfoPopover({
   onClose,
   onAdvance,
   onReplayAudio,
+  simplifiedSentence,
+  isSimplifying,
+  simplifyError,
+  onSimplifySentence,
+  prevSentenceText,
+  nextSentenceText,
   heldKeysRef,
 }: WordInfoPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -223,6 +244,50 @@ export function WordInfoPopover({
         )}
         {wordInfo && !isLoading && !error && (
           <StageContent stage={stage} wordInfo={wordInfo} exampleError={exampleError} onReplayAudio={onReplayAudio} />
+        )}
+      </div>
+      {/* Simplify sentence -- deliberately last, below the whole stage
+          cycle above, per explicit design direction: it's a separate,
+          supplementary action on the sentence, not part of the
+          pronunciation/definition/morphology/hear-aloud/example flow, so
+          it shouldn't compete with that content for the top of the card. */}
+      <div className="word-info-popover__simplify">
+        {!simplifiedSentence && (
+          <button
+            type="button"
+            className="word-info-popover__simplify-btn"
+            disabled={isSimplifying}
+            onClick={(e) => {
+              // Same reasoning as the "Hear it again" button above --
+              // don't let this click also bubble up to the box's own
+              // onClick={onAdvance} and skip a stage.
+              e.stopPropagation();
+              onSimplifySentence();
+            }}
+          >
+            {isSimplifying ? "Simplifying…" : "🪄 Simplify sentence"}
+          </button>
+        )}
+        {simplifyError && !isSimplifying && <span className="word-info-popover__error">{simplifyError}</span>}
+        {simplifiedSentence && !simplifiedSentence.needs_simplification && (
+          <span className="word-info-popover__muted">No simplified sentence available.</span>
+        )}
+        {simplifiedSentence && simplifiedSentence.needs_simplification && (
+          <>
+            {/* Surrounding context, so the simplified wording isn't
+                judged in isolation -- see this component's prop doc
+                comment for prevSentenceText/nextSentenceText. */}
+            {prevSentenceText && <div className="word-info-popover__context">{prevSentenceText}</div>}
+            {/* Whole original directly above the whole simplified
+                rewrite -- one coherent sentence each, not a chunk-by-
+                chunk breakdown (see word_info.py's simplify_sentence
+                docstring for why that changed). */}
+            <div className="word-info-popover__compare">
+              <div className="word-info-popover__compare-original">{activeWord.sentenceText}</div>
+              <div className="word-info-popover__compare-simplified">{simplifiedSentence.simplified}</div>
+            </div>
+            {nextSentenceText && <div className="word-info-popover__context">{nextSentenceText}</div>}
+          </>
         )}
       </div>
     </div>

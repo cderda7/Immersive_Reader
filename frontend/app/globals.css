@@ -217,7 +217,10 @@ body {
    win if they ever did overlap. */
 .word-info-popover {
   z-index: 10;
-  width: 280px;
+  /* Wider than the original 280px -- the sentence-simplify comparison
+     grid needs real room to lay out chunk columns without wrapping every
+     single one onto its own line. */
+  width: 360px;
   max-width: calc(100vw - 24px);
   background: var(--paper);
   border: 1px solid var(--control-border);
@@ -276,6 +279,62 @@ body {
 }
 .word-info-popover__replay-btn:hover {
   opacity: 0.9;
+}
+.word-info-popover__simplify {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid #e6e2d8;
+}
+.word-info-popover__simplify-btn {
+  align-self: flex-start;
+  background: var(--tier-syllable);
+  color: var(--ink);
+  border: none;
+  border-radius: 8px;
+  padding: 6px 12px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.word-info-popover__simplify-btn:hover {
+  opacity: 0.9;
+}
+.word-info-popover__simplify-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+/* Surrounding sentence-before/sentence-after context -- muted and small
+   so it clearly reads as backdrop, not the thing being compared. */
+.word-info-popover__context {
+  font-size: 12px;
+  font-style: italic;
+  color: var(--muted);
+}
+/* The original/simplified comparison itself: one WHOLE sentence stacked
+   directly above the other, close together, so proximity still does the
+   work of showing the correspondence even without a chunk-by-chunk
+   breakdown -- see word_info.py's simplify_sentence docstring. */
+.word-info-popover__compare {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  background: var(--tier-paragraph);
+  border-radius: 8px;
+  padding: 10px;
+}
+.word-info-popover__compare-original {
+  font-size: 13px;
+  color: var(--ink);
+}
+.word-info-popover__compare-simplified {
+  font-size: 13px;
+  font-weight: 600;
+  color: #8a5a00;
+  border-top: 1px dashed var(--tier-syllable);
+  padding-top: 4px;
 }
 
 .return-banner {
@@ -490,4 +549,93 @@ kbd {
   border-radius: 4px;
   padding: 1px 6px;
   font-size: 11px;
+}
+
+/* app/teacher/page.tsx -- a small standalone screen, not a panel bolted
+   onto the reading UI, so it reads as its own real surface. Reuses the
+   same card/control language as .word-info-popover and .library-picker-
+   select (paper background, control-border, warm tier tints) rather than
+   inventing a second visual language for one page. */
+.teacher-page {
+  display: flex;
+  justify-content: center;
+  min-height: 100vh;
+  padding: 48px 20px;
+}
+.teacher-card {
+  width: 100%;
+  max-width: 420px;
+  background: var(--paper);
+  border: 1px solid var(--control-border);
+  border-radius: 14px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.08);
+  padding: 28px 26px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.teacher-card__title {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--ink);
+  margin: 0;
+}
+.teacher-card__subtitle {
+  font-size: 13px;
+  color: var(--muted);
+  margin: -10px 0 0 0;
+}
+.teacher-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.teacher-field .library-picker-select {
+  max-width: none;
+  padding: 8px 10px;
+}
+.teacher-generate-btn {
+  background: var(--tier-syllable);
+  color: var(--ink);
+  border: none;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 14px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.teacher-generate-btn:hover:not(:disabled) {
+  opacity: 0.9;
+}
+.teacher-generate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.teacher-link-row {
+  display: flex;
+  gap: 8px;
+}
+.teacher-link-input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12px;
+  color: var(--ink);
+  background: var(--control-bg);
+}
+.teacher-copy-btn {
+  background: #fff;
+  color: var(--ink);
+  border: 1px solid var(--control-border);
+  border-radius: 8px;
+  padding: 8px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.teacher-copy-btn:hover {
+  background: var(--tier-paragraph);
 }

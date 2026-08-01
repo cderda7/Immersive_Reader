@@ -72,7 +72,17 @@ interface WordExampleResponse {
   definition?: string;
 }
 
-export function useTapWord() {
+// Shape POST /api/simplify-sentence returns -- see
+// word_info.py's simplify_sentence. needs_simplification false means the
+// sentence was already judged plain/literal/at-grade-level -- simplified
+// is "" in that case, and WordInfoPopover.tsx shows "No simplified
+// sentence available." instead of a comparison.
+export interface SimplifiedSentence {
+  needs_simplification: boolean;
+  simplified: string;
+}
+
+export function useTapWord(gradeLevel: number = 9) {
   const [activeWord, setActiveWord] = useState<ActiveWord | null>(null);
   const [stageIndex, setStageIndex] = useState(0);
   const [wordInfo, setWordInfo] = useState<WordInfo | null>(null);
@@ -83,6 +93,21 @@ export function useTapWord() {
   // the fast fetch succeeding). A failed example fetch shouldn't block
   // any of that -- only StageContent's "example" case reads this one.
   const [exampleError, setExampleError] = useState<string | null>(null);
+
+  // "Simplify sentence" -- deliberately separate from the
+  // pronunciation/definition/morphology/hear-aloud/example stage cycle
+  // above: it acts on the whole sentence the tapped word came from, not
+  // the word, and is available the instant the card opens regardless of
+  // which stage the student is on (see WordInfoPopover.tsx). gradeLevel
+  // comes from the teacher-configured link (see ReadingScreen.tsx),
+  // defaulting to 9 when opened without one (e.g. local dev). `chunks`
+  // (not just a flat rewritten string) is what lets the popover render
+  // the original and simplified wording as a proximity-aligned grid --
+  // see word_info.py's simplify_sentence for how these are produced.
+  const [simplifiedSentence, setSimplifiedSentence] = useState<SimplifiedSentence | null>(null);
+  const [isSimplifying, setIsSimplifying] = useState(false);
+  const [simplifyError, setSimplifyError] = useState<string | null>(null);
+  const simplifyCacheRef = useRef<Map<string, SimplifiedSentence>>(new Map());
 
   // Two caches, mirroring the backend's own quick/example split (see
   // word_info.py) rather than one all-or-nothing cache -- a word can
@@ -319,6 +344,15 @@ export function useTapWord() {
 
       setActiveWord({ paragraphIdx, wordIdx, sentenceIdx, word: rawWordText, sentenceText });
       setStageIndex(0);
+      // A genuinely new word (possibly a new sentence too) -- any
+      // simplification shown belonged to the PREVIOUS sentence, so it
+      // shouldn't linger under the new card. Re-simplifying (if the
+      // student clicks the button again) hits simplifyCacheRef instantly
+      // when it's actually the same sentence, so this costs nothing in
+      // the common "another word, same sentence" case.
+      setSimplifiedSentence(null);
+      setSimplifyError(null);
+      setIsSimplifying(false);
       fetchWordInfo(cleanWordText(rawWordText), sentenceText);
     },
     [activeWord, advanceOrRetry, fetchWordInfo]
@@ -336,6 +370,68 @@ export function useTapWord() {
     if (wordInfo) speak(wordInfo.word);
   }, [wordInfo]);
 
+  function simplifyCacheKey(sentence: string, grade: number): string {
+    return `${sentence} ${grade}`;
+  }
+
+  // Fetches (or reuses a cached) simplified rewrite of the active word's
+  // sentence at the teacher-configured grade level. Independent of
+  // fetchWordInfo/fetchExampleOnly above -- doesn't touch wordInfo,
+  // stages, or stageIndex at all -- but reuses requestIdRef for the same
+  // staleness reason: if the student taps away to a different word
+  // before this resolves, the response is stale and should be ignored
+  // rather than clobbering whatever's now active.
+  const simplifySentence = useCallback(() => {
+    if (!activeWord) return;
+    const sentence = activeWord.sentenceText;
+    const cacheKeyStr = simplifyCacheKey(sentence, gradeLevel);
+    const cached = simplifyCacheRef.current.get(cacheKeyStr);
+    if (cached !== undefined) {
+      setSimplifiedSentence(cached);
+      setSimplifyError(null);
+      return;
+    }
+
+    const requestId = requestIdRef.current;
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
+    setIsSimplifying(true);
+    setSimplifyError(null);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+
+    fetch(`${apiUrl}/api/simplify-sentence`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sentence, grade_level: gradeLevel }),
+      signal: controller.signal,
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          const body = await res.json().catch(() => null);
+          throw new Error(body?.error ?? `Backend returned ${res.status}`);
+        }
+        return res.json();
+      })
+      .then((data: SimplifiedSentence) => {
+        if (requestIdRef.current !== requestId) return; // stale -- student tapped away
+        simplifyCacheRef.current.set(cacheKeyStr, data);
+        setSimplifiedSentence(data);
+        setIsSimplifying(false);
+      })
+      .catch((err) => {
+        if (requestIdRef.current !== requestId) return;
+        setSimplifyError(
+          err.name === "AbortError"
+            ? "Simplifying this sentence is taking too long."
+            : err instanceof Error
+              ? `Couldn't simplify this sentence (${err.message}).`
+              : "Couldn't simplify this sentence."
+        );
+        setIsSimplifying(false);
+      })
+      .finally(() => clearTimeout(timeoutId));
+  }, [activeWord, gradeLevel]);
+
   return {
     activeWord,
     isOpen: activeWord !== null,
@@ -350,5 +446,9 @@ export function useTapWord() {
     advanceStage,
     closeWord,
     replayAudio,
+    simplifiedSentence,
+    isSimplifying,
+    simplifyError,
+    simplifySentence,
   };
 }

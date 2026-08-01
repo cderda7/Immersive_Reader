@@ -1,8 +1,10 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { useSearchParams } from "next/navigation";
 import { useReadingState, type AdvanceMode } from "@/lib/useReadingState";
 import { useTapWord } from "@/lib/useTapWord";
+import { neighboringSentenceText } from "@/lib/types";
 import { ReadingPane } from "./ReadingPane";
 import { ReturnBanner } from "./ReturnBanner";
 import { ControlBar } from "./ControlBar";
@@ -21,9 +23,26 @@ const ADVANCE_MODE_LABEL: Record<AdvanceMode, string> = {
   paragraph: "paragraph",
 };
 
+// Falls back to a mid-range default (7-12 is this app's whole target
+// audience) when opened without a teacher-generated link at all -- e.g.
+// local dev, or a student who navigated here directly.
+const DEFAULT_GRADE_LEVEL = 9;
+
 export function ReadingScreen() {
   const state = useReadingState();
-  const tapWord = useTapWord();
+
+  // Teacher-configured link params (see app/teacher/page.tsx): ?book=
+  // and ?chapter= auto-load that chapter once on mount, skipping the
+  // manual LibraryPicker interaction; ?grade= calibrates the tap-word
+  // card's "Simplify sentence" feature. LibraryPicker stays visible and
+  // usable even when a link auto-loaded a chapter -- a student can still
+  // switch books manually, this just saves the extra click for the
+  // common "opened my teacher's link" case.
+  const searchParams = useSearchParams();
+  const rawGrade = Number(searchParams.get("grade"));
+  const gradeLevel = Number.isInteger(rawGrade) && rawGrade > 0 ? rawGrade : DEFAULT_GRADE_LEVEL;
+
+  const tapWord = useTapWord(gradeLevel);
 
   // Shared between ReadingPane (which starts the hold-to-define timer on
   // Space/ArrowRight keydown) and WordInfoPopover (which uses the SAME
@@ -40,6 +59,22 @@ export function ReadingScreen() {
   // is listening at any given moment sees accurate physical key state,
   // not a state that resets just because the DOM mounted a new listener.
   const heldKeysRef = useRef<Set<string>>(new Set());
+
+  // Auto-load the teacher-linked chapter once on mount. Guarded by a ref
+  // (not just the effect's dependency array) so this fires exactly once
+  // even if searchParams' identity happens to change on a later render
+  // -- re-firing loadChapter mid-session would silently yank the student
+  // back to word 1 of a chapter they may have already read into.
+  const autoLoadedRef = useRef(false);
+  useEffect(() => {
+    if (autoLoadedRef.current) return;
+    const book = searchParams.get("book");
+    const chapter = searchParams.get("chapter");
+    if (book && chapter) {
+      autoLoadedRef.current = true;
+      state.loadChapter(book, chapter);
+    }
+  }, [searchParams, state.loadChapter]);
 
   // Drive the CSS variables the typography controls target, so the whole
   // layout scales from one source of truth instead of per-element styles.
@@ -101,6 +136,22 @@ export function ReadingScreen() {
             onClose={tapWord.closeWord}
             onAdvance={tapWord.advanceStage}
             onReplayAudio={tapWord.replayAudio}
+            simplifiedSentence={tapWord.simplifiedSentence}
+            isSimplifying={tapWord.isSimplifying}
+            simplifyError={tapWord.simplifyError}
+            onSimplifySentence={tapWord.simplifySentence}
+            prevSentenceText={neighboringSentenceText(
+              state.syllables,
+              tapWord.activeWord.paragraphIdx,
+              tapWord.activeWord.sentenceIdx,
+              "before"
+            )}
+            nextSentenceText={neighboringSentenceText(
+              state.syllables,
+              tapWord.activeWord.paragraphIdx,
+              tapWord.activeWord.sentenceIdx,
+              "after"
+            )}
             heldKeysRef={heldKeysRef}
           />
         )}

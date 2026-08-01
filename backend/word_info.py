@@ -1074,3 +1074,134 @@ def get_word_example(word: str, sentence: str) -> dict:
         _dictionary_cache[cleaned] = backfilled_entry
 
     return result
+
+
+# --- Sentence simplification (teacher-configured grade level) ---------
+#
+# Powers POST /api/simplify-sentence -- the "Simplify sentence" button on
+# the tap-word card. Deliberately independent of the pronunciation/
+# definition/morphology/hear-aloud/example stage cycle above: it acts on
+# the whole SENTENCE the tapped word came from, not the word itself, and
+# is available the instant the card opens regardless of which stage the
+# student is on (see WordInfoPopover.tsx). grade_level comes from a
+# teacher-configured setting baked into the shareable class link (see
+# frontend/app/teacher/page.tsx) -- not from anything a student can set
+# themselves, since letting every student silently read a different
+# "simplified" version of the same passage undermines the point of the
+# reading practice.
+_SIMPLIFY_CACHE: dict[tuple[str, int], dict] = {}
+
+
+def _assess_and_simplify_tool(grade_level: int) -> dict:
+    """Tool schema is built per-call (not a module-level constant like
+    _ENRICH_TOOL) since its description embeds grade_level -- cheap, and
+    keeps the calibration instruction right next to the field it
+    constrains instead of only living in the prompt text."""
+    return {
+        "name": "assess_and_simplify",
+        "description": (
+            "Judge whether a sentence already reads as plain, literal language at or below "
+            "a target grade level, and if it doesn't, rewrite the WHOLE sentence (not just "
+            "individual words) into one that does."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "needs_simplification": {
+                    "type": "boolean",
+                    "description": (
+                        "False if the sentence is ALREADY literal (no figurative language, "
+                        "archaic or unusual wording, or unusually complex structure) and would "
+                        f"already be easy for a grade {grade_level} reader as written -- true "
+                        "otherwise. Judge honestly: most short, plain, modern-English sentences "
+                        "should come back false, not every sentence needs rewriting."
+                    ),
+                },
+                "simplified": {
+                    "type": "string",
+                    "description": (
+                        "The WHOLE sentence rewritten in simpler language a grade "
+                        f"{grade_level} student would find easy to read, keeping the same "
+                        "meaning and not inventing new details. Required (non-empty) when "
+                        "needs_simplification is true; leave as an empty string when false."
+                    ),
+                },
+            },
+            "required": ["needs_simplification", "simplified"],
+        },
+    }
+
+
+def simplify_sentence(sentence: str, grade_level: int) -> dict:
+    """Assesses whether `sentence` already reads as plain, literal language
+    at grade level, and if not, rewrites the WHOLE sentence (not
+    word-by-word or chunk-by-chunk -- a single coherent rewrite) to
+    `grade_level` via one Claude tool-use call. Deliberately does the
+    assessment and the rewrite together in one round trip rather than two
+    separate calls -- functionally the same "judge first, then simplify
+    only if needed" behavior, just without paying for a second Anthropic
+    call to get it.
+
+    Returns {"needs_simplification": bool, "simplified": str} --
+    `simplified` is "" whenever needs_simplification is false, which
+    WordInfoPopover.tsx renders as "No simplified sentence available."
+    instead of a comparison, rather than showing a pointless rewrite of a
+    sentence that didn't need one. Cached by (sentence, grade_level) for
+    the process lifetime -- same reasoning as _quick_cache/_example_cache:
+    a student re-opening the same sentence's card, or a classmate on the
+    same shared teacher link hitting the same sentence, shouldn't pay for
+    a second round trip.
+
+    grade_level is currently hardcoded to 9 below, ignoring whatever the
+    teacher-configured link actually sent -- an explicit, temporary
+    simplification while this feature's core judgment (assess-then-
+    simplify, whole sentence not chunks) gets dialed in; the real
+    grade_level is left as this function's parameter (not removed) so
+    main.py's route and the frontend's plumbing don't need to change
+    again once it's wired back in."""
+    grade_level = 9  # TODO: use the real (clamped) grade_level once the prompt above is solid
+    cache_key = (sentence, grade_level)
+    cached = _SIMPLIFY_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    client = _get_anthropic_client()
+    prompt = (
+        f'Sentence: "{sentence}"\n\n'
+        f"First judge: is this sentence already plain, literal, modern English that would "
+        f"already be easy for a grade {grade_level} reader exactly as written? If yes, "
+        "needs_simplification is false and simplified can be left empty. If no -- it uses "
+        "figurative language, archaic or unusual wording, or an unusually complex structure "
+        "-- set needs_simplification to true and rewrite the WHOLE sentence in simpler "
+        "language, keeping the same meaning. Call the assess_and_simplify tool."
+    )
+    # Same bounded client (timeout/max_retries set once in
+    # _get_anthropic_client()) and the same logged-then-re-raised
+    # exception handling as _generate_enrichment above, so a flaky
+    # connection fails fast into main.py's CORS-safe 502 handler instead
+    # of hanging silently.
+    try:
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=384,
+            tools=[_assess_and_simplify_tool(grade_level)],
+            tool_choice={"type": "tool", "name": "assess_and_simplify"},
+            messages=[{"role": "user", "content": prompt}],
+        )
+    except APITimeoutError as exc:
+        logger.warning("Anthropic call timed out simplifying a sentence: %s", exc)
+        raise
+    except APIConnectionError as exc:
+        logger.warning("Anthropic connection error simplifying a sentence: %s (cause=%r)", exc, exc.__cause__)
+        raise
+    except APIStatusError as exc:
+        logger.warning("Anthropic API error simplifying a sentence: status=%s body=%s", exc.status_code, exc.message)
+        raise
+
+    tool_use = next(b for b in response.content if b.type == "tool_use")
+    needs_simplification = bool(tool_use.input.get("needs_simplification"))
+    simplified = (tool_use.input.get("simplified") or "").strip() if needs_simplification else ""
+
+    result = {"needs_simplification": needs_simplification, "simplified": simplified}
+    _SIMPLIFY_CACHE[cache_key] = result
+    return result

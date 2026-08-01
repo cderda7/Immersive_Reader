@@ -21,7 +21,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from syllabify import syllabify
-from word_info import get_word_example, get_word_info_quick
+from word_info import get_word_example, get_word_info_quick, simplify_sentence
 
 app = FastAPI(title="Immersive Reader API")
 
@@ -42,6 +42,11 @@ class SyllabifyRequest(BaseModel):
 class WordInfoRequest(BaseModel):
     word: str
     sentence: str
+
+
+class SimplifySentenceRequest(BaseModel):
+    sentence: str
+    grade_level: int
 
 
 @app.get("/api/health")
@@ -79,5 +84,16 @@ def word_example_route(req: WordInfoRequest):
     # exception handling as above.
     try:
         return get_word_example(req.word, req.sentence)
+    except Exception as exc:
+        return JSONResponse(status_code=502, content={"error": str(exc)})
+
+
+@app.post("/api/simplify-sentence")
+def simplify_sentence_route(req: SimplifySentenceRequest):
+    # Same CORS-safe exception handling as the tap-word routes above --
+    # see word_info.py's simplify_sentence for the teacher-configured
+    # grade_level this rewrites toward.
+    try:
+        return simplify_sentence(req.sentence, req.grade_level)
     except Exception as exc:
         return JSONResponse(status_code=502, content={"error": str(exc)})
