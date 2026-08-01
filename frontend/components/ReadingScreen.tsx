@@ -122,6 +122,7 @@ export function ReadingScreen() {
             exampleError={tapWord.exampleError}
             onClose={tapWord.closeWord}
             onAdvance={tapWord.advanceStage}
+            onRetreat={tapWord.retreatStage}
             onReplayAudio={tapWord.replayAudio}
             simplifiedSentence={tapWord.simplifiedSentence}
             isSimplifying={tapWord.isSimplifying}

@@ -16,6 +16,10 @@ interface WordInfoPopoverProps {
   exampleError: string | null;
   onClose: () => void;
   onAdvance: () => void;
+  // ArrowLeft while the card is open -- steps back a stage, or closes the
+  // card if already on the first one (pronunciation). See
+  // useTapWord.ts's retreatStage.
+  onRetreat: () => void;
   onReplayAudio: () => void;
   // "Simplify sentence" -- independent of the stage cycle above, see
   // useTapWord.ts's simplifySentence. Available the instant the card
@@ -68,6 +72,7 @@ export function WordInfoPopover({
   exampleError,
   onClose,
   onAdvance,
+  onRetreat,
   onReplayAudio,
   simplifiedSentence,
   isSimplifying,
@@ -189,6 +194,14 @@ export function WordInfoPopover({
     onAdvanceRef.current = onAdvance;
   }, [onAdvance]);
 
+  // Same staleness problem, same fix, for ArrowLeft -- onRetreat
+  // (useTapWord.ts's retreatStage) closes over stageIndex too, so it gets
+  // a fresh identity every stage change just like onAdvance does.
+  const onRetreatRef = useRef(onRetreat);
+  useEffect(() => {
+    onRetreatRef.current = onRetreat;
+  }, [onRetreat]);
+
   // heldKeysRef comes in as a prop now (shared with ReadingPane) rather
   // than a local ref -- see this component's prop doc comment for why a
   // fresh local Set here specifically broke the hold-to-define handoff.
@@ -238,6 +251,19 @@ export function WordInfoPopover({
         if (heldKeysRef.current.has(e.code)) return; // still down from a previous keydown -- wait for keyup
         heldKeysRef.current.add(e.code);
         onAdvanceRef.current();
+      } else if (e.code === "ArrowLeft") {
+        // ArrowLeft steps back a stage (or closes the card, on the first
+        // one -- see retreatStage). ReadingPane's OWN ArrowLeft handling
+        // (normal retreat() through the passage) already no-ops whenever
+        // tapWordOpen is true, exactly mirroring how it steps aside for
+        // Space/ArrowRight above -- same reasoning, this is that other
+        // half for the third key. No heldKeysRef dedupe here: unlike
+        // Space/ArrowRight there's no hold-to-define timer for this key
+        // to hand off from, and ReadingPane's own retreat() has never
+        // rate-limited ArrowLeft either -- holding it down is fine.
+        if (e.target instanceof HTMLElement && e.target.closest("button")) return;
+        e.preventDefault();
+        onRetreatRef.current();
       }
     }
     function handleKeyUp(e: KeyboardEvent) {

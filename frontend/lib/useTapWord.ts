@@ -366,6 +366,30 @@ export function useTapWord(gradeLevel: number = 9) {
     advanceOrRetry(activeWord.word, activeWord.sentenceText);
   }, [activeWord, advanceOrRetry]);
 
+  // ArrowLeft while the card is open (WordInfoPopover.tsx) -- mirrors
+  // advanceOrRetry's forward path, but backward. Already on the FIRST
+  // stage (pronunciation, index 0) means there's nowhere earlier to
+  // retreat to -- same "nothing left here, so this key means I'm done
+  // with this word" logic advanceOrRetry applies at the LAST stage, just
+  // at the other end of the stage list: closes the card instead of
+  // sitting inert, dropping back to whatever was already being read (the
+  // actual reading position was never touched by looking a word up, same
+  // as closeWord elsewhere). Retreating back INTO hearAloud replays the
+  // word out loud too, mirroring advanceOrRetry's own speak-on-arrival so
+  // audio plays consistently regardless of which direction landed there.
+  const retreatStage = useCallback(() => {
+    if (!activeWord) return;
+    if (stageIndex === 0) {
+      closeWord();
+      return;
+    }
+    setStageIndex((i) => {
+      const prev = Math.max(i - 1, 0);
+      if (stages[prev] === "hearAloud" && prev !== i) speak(wordInfo?.word ?? activeWord.word);
+      return prev;
+    });
+  }, [activeWord, stageIndex, stages, wordInfo, closeWord]);
+
   const replayAudio = useCallback(() => {
     if (wordInfo) speak(wordInfo.word);
   }, [wordInfo]);
@@ -444,6 +468,7 @@ export function useTapWord(gradeLevel: number = 9) {
     exampleError,
     tapWord,
     advanceStage,
+    retreatStage,
     closeWord,
     replayAudio,
     simplifiedSentence,
