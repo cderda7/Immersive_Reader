@@ -140,7 +140,6 @@ export function ReadingScreen() {
             onClose={tapWord.closeWord}
             onAdvance={tapWord.advanceStage}
             onRetreat={tapWord.retreatStage}
-            onReplayAudio={tapWord.replayAudio}
             onOpenSimplifyFocus={tapWord.openSimplifyFocus}
             isSimplifying={tapWord.isSimplifying}
             heldKeysRef={heldKeysRef}

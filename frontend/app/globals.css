@@ -274,7 +274,7 @@ body {
 }
 
 /* Tap-word card (WordInfoPopover.tsx) -- word-level pronunciation/
-   definition/morphology/hear-aloud/example, positioned ABOVE the tapped
+   definition/morphology/example, positioned ABOVE the tapped
    word. Its sentence-level sibling, .simplify-popover below, is a
    separate floating panel BELOW the word instead of a section of this
    same card -- see that class's own comment. position: fixed is set
@@ -332,20 +332,6 @@ body {
 }
 .word-info-popover__example {
   font-style: italic;
-}
-.word-info-popover__replay-btn {
-  align-self: flex-start;
-  background: var(--tier-word);
-  color: var(--ink);
-  border: none;
-  border-radius: 8px;
-  padding: 6px 12px;
-  font-size: 13px;
-  font-weight: 600;
-  cursor: pointer;
-}
-.word-info-popover__replay-btn:hover {
-  opacity: 0.9;
 }
 /* Simplify-sentence panel (WordInfoPopover.tsx) -- its own floating box
    below the tapped word/sentence, separate from .word-info-popover above

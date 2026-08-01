@@ -3,7 +3,7 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import type { Syllable, WordInfo } from "./types";
 
-export type TapWordStage = "pronunciation" | "definition" | "morphology" | "hearAloud" | "example";
+export type TapWordStage = "pronunciation" | "definition" | "morphology" | "example";
 
 export interface ActiveWord {
   paragraphIdx: number;
@@ -22,25 +22,12 @@ function cleanWordText(raw: string): string {
   return raw.replace(/^[^\p{L}\p{N}'-]+|[^\p{L}\p{N}'-]+$/gu, "").toLowerCase();
 }
 
-// Slightly slower than default (1.0) for clarity, matching this app's
-// struggling-reader audience -- same reasoning as the deliberate pauses
-// in useReadingState.ts, just applied to speech rate instead of timing.
-const HEAR_ALOUD_RATE = 0.85;
-
 // Neither fetch had a timeout before -- a hung connection (server down
 // mid-request, dropped wifi) would leave "Looking it up…" or "Writing an
 // example…" showing forever with no way to recover short of tapping a
 // different word and back. Bounding both means a stall always resolves
 // into a real, retryable error within 15s instead of an indefinite hang.
 const FETCH_TIMEOUT_MS = 15000;
-
-function speak(word: string) {
-  if (typeof window === "undefined" || !window.speechSynthesis) return;
-  window.speechSynthesis.cancel(); // don't let utterances stack if tapped rapidly
-  const utterance = new SpeechSynthesisUtterance(word);
-  utterance.rate = HEAR_ALOUD_RATE;
-  window.speechSynthesis.speak(utterance);
-}
 
 function stagesFor(info: WordInfo | null): TapWordStage[] {
   // Before data has loaded, only the (loading-state) pronunciation stage
@@ -56,7 +43,11 @@ function stagesFor(info: WordInfo | null): TapWordStage[] {
   // a student who has already tapped past this point never sees the
   // stage list reshuffle out from under them.
   if (info.morphology) stages.push("morphology");
-  stages.push("hearAloud", "example");
+  // hearAloud (a dedicated "🔊 Hear it again" stage) was removed from
+  // this cycle -- product direction, Aug 1 2026. speak()/replayAudio and
+  // the speak-on-arrival hooks in advanceOrRetry/retreatStage went with
+  // it, since this was their only call site.
+  stages.push("example");
   return stages;
 }
 
@@ -107,8 +98,8 @@ export function useTapWord(gradeLevel: number = 9) {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Separate from `error` above on purpose: `error` gates the WHOLE
-  // card (pronunciation/definition/morphology/hear-aloud all depend on
-  // the fast fetch succeeding). A failed example fetch shouldn't block
+  // card (pronunciation/definition/morphology all depend on the fast
+  // fetch succeeding). A failed example fetch shouldn't block
   // any of that -- only StageContent's "example" case reads this one.
   const [exampleError, setExampleError] = useState<string | null>(null);
 
@@ -134,8 +125,8 @@ export function useTapWord(gradeLevel: number = 9) {
   const [isDefinitionConfirmed, setIsDefinitionConfirmed] = useState(false);
 
   // "Simplify sentence" -- deliberately separate from the
-  // pronunciation/definition/morphology/hear-aloud/example stage cycle
-  // above: it acts on the whole sentence the tapped word came from, not
+  // pronunciation/definition/morphology/example stage cycle above: it
+  // acts on the whole sentence the tapped word came from, not
   // the word, and is available the instant the card opens regardless of
   // which stage the student is on (see WordInfoPopover.tsx). gradeLevel
   // comes from the teacher-configured link (see ReadingScreen.tsx),
@@ -332,8 +323,8 @@ export function useTapWord(gradeLevel: number = 9) {
       }
 
       // Fired together, not one-after-the-other -- pronunciation/
-      // definition/morphology/hear-aloud (the fast /api/word-info
-      // response) don't need to wait on the example sentence (the slow
+      // definition/morphology (the fast /api/word-info response)
+      // don't need to wait on the example sentence (the slow
       // /api/word-example one), and vice versa. This is the whole point
       // of the fast/slow split: by the time the student has tapped
       // through the first four stages, the example call has almost
@@ -402,11 +393,7 @@ export function useTapWord(gradeLevel: number = 9) {
         closeWord();
         return;
       }
-      setStageIndex((i) => {
-        const next = Math.min(i + 1, stages.length - 1);
-        if (stages[next] === "hearAloud" && next !== i) speak(wordInfo?.word ?? rawWordText);
-        return next;
-      });
+      setStageIndex((i) => Math.min(i + 1, stages.length - 1));
     },
     [
       wordInfo,
@@ -465,25 +452,15 @@ export function useTapWord(gradeLevel: number = 9) {
   // at the other end of the stage list: closes the card instead of
   // sitting inert, dropping back to whatever was already being read (the
   // actual reading position was never touched by looking a word up, same
-  // as closeWord elsewhere). Retreating back INTO hearAloud replays the
-  // word out loud too, mirroring advanceOrRetry's own speak-on-arrival so
-  // audio plays consistently regardless of which direction landed there.
+  // as closeWord elsewhere).
   const retreatStage = useCallback(() => {
     if (!activeWord) return;
     if (stageIndex === 0) {
       closeWord();
       return;
     }
-    setStageIndex((i) => {
-      const prev = Math.max(i - 1, 0);
-      if (stages[prev] === "hearAloud" && prev !== i) speak(wordInfo?.word ?? activeWord.word);
-      return prev;
-    });
-  }, [activeWord, stageIndex, stages, wordInfo, closeWord]);
-
-  const replayAudio = useCallback(() => {
-    if (wordInfo) speak(wordInfo.word);
-  }, [wordInfo]);
+    setStageIndex((i) => Math.max(i - 1, 0));
+  }, [activeWord, stageIndex, closeWord]);
 
   function simplifyCacheKey(sentence: string, grade: number): string {
     return `${sentence} ${grade}`;
@@ -681,7 +658,6 @@ export function useTapWord(gradeLevel: number = 9) {
     advanceStage,
     retreatStage,
     closeWord,
-    replayAudio,
     simplifiedSentence,
     isSimplifying,
     simplifyError,

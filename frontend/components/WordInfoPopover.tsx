@@ -30,7 +30,6 @@ interface WordInfoPopoverProps {
   // card if already on the first one (pronunciation). See
   // useTapWord.ts's retreatStage.
   onRetreat: () => void;
-  onReplayAudio: () => void;
   // "Simplify sentence" -- opens the full-screen recentered
   // SimplifySentenceFocus view (see useTapWord.ts's openSimplifyFocus)
   // instead of expanding inline here -- but ONLY once a usable rewrite is
@@ -82,7 +81,6 @@ export function WordInfoPopover({
   onClose,
   onAdvance,
   onRetreat,
-  onReplayAudio,
   onOpenSimplifyFocus,
   isSimplifying,
   heldKeysRef,
@@ -247,9 +245,10 @@ export function WordInfoPopover({
       // for what these keys mean -- this is that other half.
       //
       // Skip it when focus is on an interactive element inside the card
-      // (the "Hear it again" button) -- Space there already has its own
-      // native meaning (activate the button), and this shouldn't hijack
-      // that or fire alongside it as a second, unintended action.
+      // (e.g. a "Tap to try again" retry button) -- Space there already
+      // has its own native meaning (activate the button), and this
+      // shouldn't hijack that or fire alongside it as a second,
+      // unintended action.
       if (e.code === "Space" || e.code === "ArrowRight") {
         if (e.target instanceof HTMLElement && e.target.closest("button")) return;
         e.preventDefault();
@@ -301,9 +300,9 @@ export function WordInfoPopover({
         role="dialog"
         aria-label={`Word info: ${activeWord.word}`}
         // Clicking the box itself advances the stage, same as tapping the
-        // word -- the "Hear it again" button below stops this from firing
-        // on top of its own click (see its onClick), so replaying audio
-        // doesn't also skip a stage.
+        // word -- any interactive element inside the card (e.g. a retry
+        // button) should stopPropagation in its own onClick so its own
+        // action doesn't ALSO skip a stage underneath it.
         onClick={onAdvance}
         style={{
           position: "fixed",
@@ -327,7 +326,6 @@ export function WordInfoPopover({
               wordInfo={wordInfo}
               exampleError={exampleError}
               isDefinitionConfirmed={isDefinitionConfirmed}
-              onReplayAudio={onReplayAudio}
             />
           )}
         </div>
@@ -336,7 +334,7 @@ export function WordInfoPopover({
       {/* Simplify sentence -- its own panel below the tapped word/sentence,
           not part of the word-info card above it. A separate, supplementary
           action on the whole SENTENCE, not the pronunciation/definition/
-          morphology/hear-aloud/example flow above, which is scoped to just
+          morphology/example flow above, which is scoped to just
           the tapped WORD -- so it gets its own space below reading
           position instead of competing with that content for room in one
           box. Just a button now -- clicking it opens the full-screen
@@ -393,13 +391,11 @@ function StageContent({
   wordInfo,
   exampleError,
   isDefinitionConfirmed,
-  onReplayAudio,
 }: {
   stage: TapWordStage;
   wordInfo: WordInfo;
   exampleError: string | null;
   isDefinitionConfirmed: boolean;
-  onReplayAudio: () => void;
 }) {
   switch (stage) {
     case "pronunciation":
@@ -439,29 +435,9 @@ function StageContent({
           <div className="word-info-popover__muted">{wordInfo.morphology.note}</div>
         </>
       ) : null;
-    case "hearAloud":
-      return (
-        <button
-          type="button"
-          className="word-info-popover__replay-btn"
-          // See the "Simplify sentence" button's own comment above -- same
-          // reasoning, keeps the reading pane from ever losing DOM focus
-          // to this button in the first place.
-          onMouseDown={(e) => e.preventDefault()}
-          onClick={(e) => {
-            // Stop this from also bubbling up to the box's own
-            // onClick={onAdvance} -- replaying audio shouldn't ALSO
-            // skip ahead to the next stage.
-            e.stopPropagation();
-            onReplayAudio();
-          }}
-        >
-          🔊 Hear it again
-        </button>
-      );
     case "example":
       // example_sentence starts as "" the instant pronunciation/
-      // definition/morphology/hear-aloud are already showable -- see
+      // definition/morphology are already showable -- see
       // word_info.py's get_word_info_quick -- and gets patched in
       // slightly later by the background /api/word-example call. "" here
       // means "still writing one", not "this word has no example"; by
