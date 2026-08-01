@@ -63,19 +63,20 @@ body {
   text-transform: uppercase;
 }
 
-/* Book title, above the passage -- see ReadingScreen.tsx's comment on why
-   this exists as its own stable element rather than relying on the
-   passage's own "CHAPTER 1. Loomings." first paragraph. Styling mirrors
-   .app-header h1 (small caps, muted) since both are the same kind of
-   label, just one level more specific. */
+/* Book title, directly above the passage -- see ReadingScreen.tsx's
+   comment on why this exists as its own stable element rather than
+   relying on the passage's own "CHAPTER 1. Loomings." first paragraph.
+   font-size matches that line exactly (both read var(--reading-font-size),
+   the same student-adjustable size the text-size control drives -- see
+   ReadingPane.tsx's own use of this variable), and the left padding
+   matches .reading-pane's own 56px so the two lines share a left edge,
+   reading as one two-line header block rather than two unrelated labels. */
 .book-title {
-  padding: 0 28px;
-  margin-top: 20px;
-  font-size: 13px;
+  padding: 0 56px;
+  margin-top: 24px;
+  font-size: var(--reading-font-size);
   font-weight: 700;
-  letter-spacing: 0.04em;
-  color: var(--muted);
-  text-transform: uppercase;
+  color: var(--ink);
 }
 
 .reading-pane-wrap {
