@@ -25,11 +25,23 @@ from word_info import get_word_example, get_word_info_quick, simplify_sentence
 
 app = FastAPI(title="Immersive Reader API")
 
-# Local dev only -- tighten before shipping if this ends up deployed
-# somewhere other than alongside the frontend.
+# TEMPORARY, per Carson (Aug 1 2026): the previous version of this
+# (allow_origins=[specific domains] + allow_origin_regex for Vercel
+# preview subdomains) was producing a live "Disallowed CORS origin" 400
+# on the browser's OPTIONS preflight against the real, confirmed-correct
+# production origin -- root cause not yet nailed down (possibly a stale
+# Railway deployment lagging behind an origin-matching edit, possibly
+# something more subtle in the exact string match), and debugging it live
+# was costing more than it was worth. This app has no auth, no cookies,
+# no per-user data (see this file's module docstring -- stateless, no
+# accounts) -- there's nothing a wildcard origin actually exposes here,
+# so allow_origins=["*"] removes origin-matching as a variable entirely
+# instead of continuing to guess at it. allow_credentials is deliberately
+# left at its default (False) -- that's what makes "*" valid at all here;
+# don't add cookie/session auth later without revisiting this.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["*"],
     allow_methods=["POST", "GET"],
     allow_headers=["*"],
 )
