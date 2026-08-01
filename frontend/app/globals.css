@@ -53,9 +53,6 @@ body {
 .app-header {
   padding: 16px 28px;
   border-bottom: 1px solid #e6e2d8;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
 }
 .app-header h1 {
   font-size: 15px;
@@ -65,26 +62,6 @@ body {
   font-weight: 600;
   text-transform: uppercase;
 }
-.legend {
-  font-size: 12px;
-  color: var(--muted);
-  display: flex;
-  gap: 14px;
-}
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  display: inline-block;
-}
-.swatch--paragraph { background: var(--tier-paragraph); }
-.swatch--word { background: var(--tier-word); }
-.swatch--syllable { background: var(--tier-syllable); }
 
 .reading-pane-wrap {
   position: relative;
@@ -190,17 +167,11 @@ body {
 .reading-word--current {
   background: var(--tier-word);
 }
-.reading-word--clickable {
-  cursor: pointer;
-}
-.reading-word--clickable:hover {
-  outline: 2px dashed var(--tier-syllable);
-  outline-offset: 2px;
-}
 .reading-word--tappable {
   cursor: pointer;
 }
-.reading-word--tappable:hover {
+.reading-word--tappable:hover,
+.reading-word--hover {
   text-decoration: underline dotted var(--muted);
   text-underline-offset: 3px;
 }
@@ -210,16 +181,62 @@ body {
   padding: 0 1px;
 }
 
-/* Tap-word card (WordInfoPopover.tsx). position: fixed is set inline
-   (viewport coordinates, computed from DOM rects) -- this just carries
-   the chrome. z-index above .breath-overlay (5) since both can only
-   plausibly be visible one at a time in practice, but the card should
-   win if they ever did overlap. */
+/* Wraps one word AND its hover-triggered .jump-here-btn (see
+   ReadingPane.tsx) in a single positioning context, so the button can be
+   anchored directly under the word with `position: absolute`. Plain
+   inline-block with no size/spacing of its own -- shrink-to-fit sizing
+   means it hugs .reading-word's existing box (including that span's own
+   margin-right), so introducing this wrapper doesn't change word spacing
+   or line-wrapping at all. */
+.reading-word-wrap {
+  position: relative;
+  display: inline-block;
+}
+/* Deliberately `top: 100%` with NO gap (no margin-top) -- touching the
+   word's bottom edge exactly. mouseenter/mouseleave are scoped to the DOM
+   subtree under .reading-word-wrap (see that component's comment), not a
+   rectangular hit region, so moving the pointer from the word straight
+   down onto this button never leaves the wrapper's subtree as long as
+   there's no dead pixel strip between them for it to pass through first --
+   a real gap here would let the pointer cross into whatever's rendered
+   just past the wrapper's own box (often the next line of text) and fire
+   a premature mouseleave, closing the chip before the click lands. */
+.jump-here-btn {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  background: #d9730d;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+.jump-here-btn:hover {
+  background: #c1650a;
+}
+
+/* Tap-word card (WordInfoPopover.tsx) -- word-level pronunciation/
+   definition/morphology/hear-aloud/example, positioned ABOVE the tapped
+   word. Its sentence-level sibling, .simplify-popover below, is a
+   separate floating panel BELOW the word instead of a section of this
+   same card -- see that class's own comment. position: fixed is set
+   inline (viewport coordinates, computed from DOM rects) -- this just
+   carries the chrome. z-index above .breath-overlay (5) since both can
+   only plausibly be visible one at a time in practice, but the card
+   should win if they ever did overlap. */
 .word-info-popover {
   z-index: 10;
-  /* Wider than the original 280px -- the sentence-simplify comparison
-     grid needs real room to lay out chunk columns without wrapping every
-     single one onto its own line. */
+  /* Wider than the original 280px -- the original/simplified sentence
+     comparison in .simplify-popover shares this same width, and needs
+     real room to lay out a whole sentence without wrapping awkwardly. */
   width: 360px;
   max-width: calc(100vw - 24px);
   background: var(--paper);
@@ -280,15 +297,25 @@ body {
 .word-info-popover__replay-btn:hover {
   opacity: 0.9;
 }
-.word-info-popover__simplify {
+/* Simplify-sentence panel (WordInfoPopover.tsx) -- its own floating box
+   below the tapped word/sentence, separate from .word-info-popover above
+   it. Same card chrome (z-index/width/background/border/shadow/padding)
+   so the two visually read as a matched pair on opposite sides of the
+   reading position, not as a main popover plus some lesser attachment. */
+.simplify-popover {
+  z-index: 10;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #e6e2d8;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  background: var(--paper);
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+  padding: 12px 14px;
 }
-.word-info-popover__simplify-btn {
+.simplify-popover__btn {
   align-self: flex-start;
   background: var(--tier-syllable);
   color: var(--ink);
@@ -299,16 +326,16 @@ body {
   font-weight: 600;
   cursor: pointer;
 }
-.word-info-popover__simplify-btn:hover {
+.simplify-popover__btn:hover {
   opacity: 0.9;
 }
-.word-info-popover__simplify-btn:disabled {
+.simplify-popover__btn:disabled {
   opacity: 0.6;
   cursor: default;
 }
 /* Surrounding sentence-before/sentence-after context -- muted and small
    so it clearly reads as backdrop, not the thing being compared. */
-.word-info-popover__context {
+.simplify-popover__context {
   font-size: 12px;
   font-style: italic;
   color: var(--muted);
@@ -317,7 +344,7 @@ body {
    directly above the other, close together, so proximity still does the
    work of showing the correspondence even without a chunk-by-chunk
    breakdown -- see word_info.py's simplify_sentence docstring. */
-.word-info-popover__compare {
+.simplify-popover__compare {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -325,11 +352,11 @@ body {
   border-radius: 8px;
   padding: 10px;
 }
-.word-info-popover__compare-original {
+.simplify-popover__compare-original {
   font-size: 13px;
   color: var(--ink);
 }
-.word-info-popover__compare-simplified {
+.simplify-popover__compare-simplified {
   font-size: 13px;
   font-weight: 600;
   color: #8a5a00;
@@ -337,27 +364,225 @@ body {
   padding-top: 4px;
 }
 
-.return-banner {
+/* Full-screen "Simplify sentence" focus view (SimplifySentenceFocus.tsx) --
+   replaces .word-info-popover/.simplify-popover the instant it opens
+   (ReadingScreen.tsx renders one or the other, never both). Recenters on
+   just the current sentence plus two sentences of context each side and
+   opens up real space, rather than cramming a comparison into a 360px
+   card -- fixed to the viewport (not the passage) for the same reason
+   .breath-overlay is: a passage can be taller than the viewport, so a
+   container-relative overlay could land off-screen or mid-scroll. z-index
+   above .jump-here-btn (15) and the two popovers above (10) since this
+   view fully takes over reading interaction while open. */
+.simplify-focus {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  cursor: pointer;
+  padding: 20px 44px 12px;
+  box-sizing: border-box;
+}
+.simplify-focus__close {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--control-border);
+  background: #fff;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  padding: 8px 28px;
-  background: #fff4d6;
-  border-bottom: 1px solid #f0d98c;
-  font-size: 13px;
-  color: #7a5c00;
+  justify-content: center;
 }
-.return-timer-track {
-  width: 120px;
-  height: 5px;
-  background: #f0d98c;
-  border-radius: 3px;
+.simplify-focus__close:hover {
+  background: var(--tier-paragraph);
+  color: var(--ink);
+}
+
+/* Wraps the before/main/after rows as ONE centered block, separate from
+   the close button (position: absolute, unaffected) and the hint line
+   below (plain flow, outside this stack). A single `gap` here is what
+   makes the spacing between context and the sentence pair match the
+   spacing WITHIN the sentence pair exactly -- same 10px value as
+   .simplify-focus__row--main's own gap below, rather than three
+   independently-sized viewport thirds with their own ad hoc padding.
+   Rows with nothing in them are skipped in the JSX entirely (see
+   SimplifySentenceFocus.tsx) rather than rendered empty, so gap doesn't
+   insert a phantom space next to an absent side. */
+.simplify-focus__stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+.simplify-focus__row {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+}
+/* Stacked paragraph blocks (see ParagraphContextBlock in lib/types.ts),
+   not the old fixed-count single-line slots -- "at least 2 sentences" can
+   mean a whole neighboring paragraph gets pulled in, so this scrolls
+   internally (capped well under the viewport) rather than growing
+   without bound and pushing the recentered sentence off-center. */
+.simplify-focus__row--context {
+  flex-direction: column;
+  gap: 10px;
+  max-height: 32vh;
+  overflow-y: auto;
+}
+/* Bottom/top-aligned within their own row so a scrolled (overflowing)
+   block's NEAREST edge to the sentence pair is what touches the shared
+   10px gap, same as a short block would -- keeps the spacing consistent
+   whether context is one short sentence or a whole extra paragraph. */
+.simplify-focus__row--before {
+  justify-content: flex-end;
+}
+.simplify-focus__row--after {
+  justify-content: flex-start;
+}
+/* Two-column comparison layout, per product direction ("original left
+   half, simplified right half, split into lines, so students compare
+   left to right") -- replaces the earlier vertical SA1/SB1/SA2/SB2
+   interleaved stack. Explicit gridColumn/gridRow placement is set inline
+   per line in SimplifySentenceFocus.tsx (original always column 1,
+   simplified always column 2, row = that segment's own index + 1) rather
+   than relying on DOM-order auto-flow, since the two sentences can have
+   different segment counts and auto-flow would misalign the columns the
+   moment one side is missing a middle segment. align-items: center keeps
+   a short segment vertically centered within its row rather than glued
+   to the top when the OTHER column's same-row segment happens to be
+   taller (wrapped context aside, single-line segments are usually the
+   same height, but this is a cheap safety net). position: relative here
+   is only so the ::before divider below can anchor to this box. */
+.simplify-focus__row--main {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 28px;
+  row-gap: 10px;
+  align-items: center;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+/* A thin vertical rule between the two columns -- drawn as a standalone
+   absolutely-positioned line rather than a border/padding on the
+   measured .simplify-focus__line elements themselves, so it can't throw
+   off useSharedScale's clientWidth-vs-scrollWidth measurement (a border
+   or padding on the measured element would make clientWidth overstate
+   the width actually available to its content). */
+.simplify-focus__row--main::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 50%;
+  width: 1px;
+  background: var(--control-border);
+}
+
+/* One paragraph of context text -- formatted like the real reading pane
+   renders a paragraph (left-aligned, wrapping prose, comfortable line
+   length) rather than the old centered single-line italic slot, per
+   product direction: context should look like the original paragraph,
+   not a clipped snippet. Sized close to the main reading pane's own body
+   text (not the smaller/italic backdrop treatment this started as) --
+   still --muted rather than --ink so it's clearly distinguishable from
+   the sentence actively being read, but legible as real passage text in
+   its own right, not a caption. */
+.simplify-focus__context-paragraph {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: left;
+  font-size: 19px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.simplify-focus__status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.simplify-focus__note {
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* One SEGMENT of one sentence (SA1/SB1/SA2/SB2/... -- see
+   SimplifySentenceFocus.tsx's splitIntoParts/interleaveSegments), placed
+   into its column/row via inline gridColumn/gridRow (set by the caller,
+   see .simplify-focus__row--main above) and forced onto a single line --
+   see useSharedScale, which measures each segment's natural (unscaled)
+   width and shrinks .simplify-focus__line-inner with transform: scale()
+   by ONE shared factor across every segment of the SAME sentence (not
+   independently per line), so e.g. a short final SA segment renders at
+   the same size as an earlier, more cramped SA segment rather than
+   ballooning up to its own natural size. overflow: hidden is a safety
+   net for the very first paint, before the scale has been computed. Both
+   original (SA) and simplified (SB) segments are always full --ink
+   weight/color and bold now -- product direction dropped the previous
+   muted-when-not-currently-being-read convention (the per-word/syllable
+   highlight below is the only "current position" indicator now, same
+   tinted-background mechanic the main reading pane itself uses).
+   --simplified is additionally italic, the one remaining visual cue that
+   distinguishes a rewrite from the original wording at a glance. */
+.simplify-focus__line {
+  width: 100%;
   overflow: hidden;
-  margin-left: 12px;
+  display: flex;
+  justify-content: center;
 }
-.return-timer-fill {
-  height: 100%;
-  background: #b8860b;
+.simplify-focus__line-inner {
+  display: inline-block;
+  white-space: nowrap;
+  transform-origin: center center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.simplify-focus__line--simplified .simplify-focus__line-inner {
+  font-style: italic;
+}
+/* Sentence-mode's own "where am I" indicator -- word/syllable mode
+   already has the per-word/syllable tint (see .reading-word--current),
+   but sentence mode carries neither of those, so without this the
+   current SA/SB segment would be indistinguishable from the rest now
+   that text color no longer marks it either. Same --tier-word background
+   ReadingPane.tsx uses for its own sentence-mode tint, just applied to a
+   whole segment line here (see SimplifySentenceFocus.tsx's tintCurrent).
+   Paragraph mode intentionally gets no indicator, same as the main pane. */
+.simplify-focus__line--current .simplify-focus__line-inner {
+  background: var(--tier-word);
+  border-radius: 6px;
+  padding: 2px 10px;
+}
+
+.simplify-focus__hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.simplify-focus__hint kbd {
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
 }
 
 /* LibraryPicker.tsx -- the primary content-loading control, styled like
@@ -480,9 +705,8 @@ body {
 
 /* "Advance by" segmented control (ControlBar.tsx) -- same chrome as
    .control-group (light bordered pill), but holding a row of toggleable
-   buttons instead of a stepper, matching .return-btn's active-state
-   pattern (solid tint, not just an outline) so the selected granularity
-   reads clearly at a glance. */
+   buttons instead of a stepper, with a solid-tint active state (not just
+   an outline) so the selected granularity reads clearly at a glance. */
 .advance-mode-group {
   display: flex;
   align-items: center;
@@ -511,6 +735,10 @@ body {
   font-weight: 600;
 }
 
+/* Generic secondary-action button chrome -- named for its original use
+   (the old "Return to…" mode toggle, since replaced by ReadingPane.tsx's
+   inline hover "JUMP HERE" chip), but still used as-is by
+   PassageLoader.tsx's "Load into reading pane" button. */
 .return-btn {
   background: var(--tier-syllable);
   /* --tier-syllable is a light warm tint now, not the old dark blue --
@@ -529,9 +757,6 @@ body {
 .return-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-.return-btn--active {
-  background: #b8860b;
 }
 .return-btn:hover:not(:disabled) {
   opacity: 0.9;

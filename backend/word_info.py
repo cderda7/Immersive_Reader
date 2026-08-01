@@ -96,6 +96,8 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 import httpx
 from anthropic import Anthropic, APIConnectionError, APIStatusError, APITimeoutError
 
+from syllabify import syllabify
+
 logger = logging.getLogger(__name__)
 
 DICTIONARY_API_URL = "https://api.dictionaryapi.dev/api/v2/entries/en/{word}"
@@ -1142,15 +1144,24 @@ def simplify_sentence(sentence: str, grade_level: int) -> dict:
     only if needed" behavior, just without paying for a second Anthropic
     call to get it.
 
-    Returns {"needs_simplification": bool, "simplified": str} --
-    `simplified` is "" whenever needs_simplification is false, which
-    WordInfoPopover.tsx renders as "No simplified sentence available."
-    instead of a comparison, rather than showing a pointless rewrite of a
-    sentence that didn't need one. Cached by (sentence, grade_level) for
-    the process lifetime -- same reasoning as _quick_cache/_example_cache:
-    a student re-opening the same sentence's card, or a classmate on the
-    same shared teacher link hitting the same sentence, shouldn't pay for
-    a second round trip.
+    Returns {"needs_simplification": bool, "simplified": str,
+    "simplified_syllables": list[dict]}. `simplified` is "" whenever
+    needs_simplification is false, which WordInfoPopover.tsx renders as
+    "No simplified sentence available." instead of a comparison, rather
+    than showing a pointless rewrite of a sentence that didn't need one.
+    `simplified_syllables` is the same flat syllable-dict shape
+    syllabify.py's syllabify() returns for a whole passage -- run here on
+    just the simplified sentence (a "passage" of one paragraph, one
+    sentence) -- so the focus reading view (SimplifySentenceFocus.tsx)
+    can advance through the simplified rewrite syllable-by-syllable with
+    the exact same highlighting/advance-by machinery as the rest of the
+    app, instead of a plain-text sentence it has no break data for.
+    Empty list when needs_simplification is false (nothing to advance
+    through). Cached by (sentence, grade_level) for the process lifetime
+    -- same reasoning as _quick_cache/_example_cache: a student
+    re-opening the same sentence's card, or a classmate on the same
+    shared teacher link hitting the same sentence, shouldn't pay for a
+    second round trip.
 
     grade_level is currently hardcoded to 9 below, ignoring whatever the
     teacher-configured link actually sent -- an explicit, temporary
@@ -1201,7 +1212,12 @@ def simplify_sentence(sentence: str, grade_level: int) -> dict:
     tool_use = next(b for b in response.content if b.type == "tool_use")
     needs_simplification = bool(tool_use.input.get("needs_simplification"))
     simplified = (tool_use.input.get("simplified") or "").strip() if needs_simplification else ""
+    simplified_syllables = syllabify(simplified) if needs_simplification and simplified else []
 
-    result = {"needs_simplification": needs_simplification, "simplified": simplified}
+    result = {
+        "needs_simplification": needs_simplification,
+        "simplified": simplified,
+        "simplified_syllables": simplified_syllables,
+    }
     _SIMPLIFY_CACHE[cache_key] = result
     return result

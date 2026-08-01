@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import type { WordInfo } from "./types";
+import type { Syllable, WordInfo } from "./types";
 
 export type TapWordStage = "pronunciation" | "definition" | "morphology" | "hearAloud" | "example";
 
@@ -75,11 +75,17 @@ interface WordExampleResponse {
 // Shape POST /api/simplify-sentence returns -- see
 // word_info.py's simplify_sentence. needs_simplification false means the
 // sentence was already judged plain/literal/at-grade-level -- simplified
-// is "" in that case, and WordInfoPopover.tsx shows "No simplified
-// sentence available." instead of a comparison.
+// is "" (and simplified_syllables []) in that case, and
+// SimplifySentenceFocus.tsx shows "No simplified sentence available."
+// instead of a comparison. simplified_syllables is the rewritten
+// sentence's own real syllable breaks (same flat shape as the passage's
+// syllables) -- what lets the focus view advance through it
+// syllable-by-syllable with the same machinery as normal reading,
+// instead of a plain string it has no break data for.
 export interface SimplifiedSentence {
   needs_simplification: boolean;
   simplified: string;
+  simplified_syllables: Syllable[];
 }
 
 export function useTapWord(gradeLevel: number = 9) {
@@ -100,14 +106,22 @@ export function useTapWord(gradeLevel: number = 9) {
   // the word, and is available the instant the card opens regardless of
   // which stage the student is on (see WordInfoPopover.tsx). gradeLevel
   // comes from the teacher-configured link (see ReadingScreen.tsx),
-  // defaulting to 9 when opened without one (e.g. local dev). `chunks`
-  // (not just a flat rewritten string) is what lets the popover render
-  // the original and simplified wording as a proximity-aligned grid --
-  // see word_info.py's simplify_sentence for how these are produced.
+  // defaulting to 9 when opened without one (e.g. local dev).
   const [simplifiedSentence, setSimplifiedSentence] = useState<SimplifiedSentence | null>(null);
   const [isSimplifying, setIsSimplifying] = useState(false);
   const [simplifyError, setSimplifyError] = useState<string | null>(null);
   const simplifyCacheRef = useRef<Map<string, SimplifiedSentence>>(new Map());
+
+  // Whether the full-screen simplify-sentence FOCUS view is showing
+  // (SimplifySentenceFocus.tsx) -- separate from simplifiedSentence
+  // itself being populated, since opening focus mode and fetching the
+  // simplified rewrite happen together (see openSimplifyFocus below):
+  // the recentered layout appears immediately, with a loading state,
+  // rather than waiting on the fetch first. ReadingScreen.tsx renders
+  // WordInfoPopover XOR SimplifySentenceFocus off this flag -- never
+  // both, so there's only ever one place listening for
+  // Space/ArrowRight/ArrowLeft/Escape while a word is active.
+  const [isSimplifyFocusOpen, setIsSimplifyFocusOpen] = useState(false);
 
   // Two caches, mirroring the backend's own quick/example split (see
   // word_info.py) rather than one all-or-nothing cache -- a word can
@@ -353,6 +367,7 @@ export function useTapWord(gradeLevel: number = 9) {
       setSimplifiedSentence(null);
       setSimplifyError(null);
       setIsSimplifying(false);
+      setIsSimplifyFocusOpen(false);
       fetchWordInfo(cleanWordText(rawWordText), sentenceText);
     },
     [activeWord, advanceOrRetry, fetchWordInfo]
@@ -365,6 +380,30 @@ export function useTapWord(gradeLevel: number = 9) {
     if (!activeWord) return;
     advanceOrRetry(activeWord.word, activeWord.sentenceText);
   }, [activeWord, advanceOrRetry]);
+
+  // ArrowLeft while the card is open (WordInfoPopover.tsx) -- mirrors
+  // advanceOrRetry's forward path, but backward. Already on the FIRST
+  // stage (pronunciation, index 0) means there's nowhere earlier to
+  // retreat to -- same "nothing left here, so this key means I'm done
+  // with this word" logic advanceOrRetry applies at the LAST stage, just
+  // at the other end of the stage list: closes the card instead of
+  // sitting inert, dropping back to whatever was already being read (the
+  // actual reading position was never touched by looking a word up, same
+  // as closeWord elsewhere). Retreating back INTO hearAloud replays the
+  // word out loud too, mirroring advanceOrRetry's own speak-on-arrival so
+  // audio plays consistently regardless of which direction landed there.
+  const retreatStage = useCallback(() => {
+    if (!activeWord) return;
+    if (stageIndex === 0) {
+      closeWord();
+      return;
+    }
+    setStageIndex((i) => {
+      const prev = Math.max(i - 1, 0);
+      if (stages[prev] === "hearAloud" && prev !== i) speak(wordInfo?.word ?? activeWord.word);
+      return prev;
+    });
+  }, [activeWord, stageIndex, stages, wordInfo, closeWord]);
 
   const replayAudio = useCallback(() => {
     if (wordInfo) speak(wordInfo.word);
@@ -432,6 +471,32 @@ export function useTapWord(gradeLevel: number = 9) {
       .finally(() => clearTimeout(timeoutId));
   }, [activeWord, gradeLevel]);
 
+  // Entry point for the "🪄 Simplify sentence" button (WordInfoPopover.tsx)
+  // -- opens the full-screen recentered focus view immediately AND kicks
+  // off the fetch (or reuses the cache) at the same time, rather than
+  // waiting for simplifiedSentence to arrive first. The view itself shows
+  // its own loading state in the meantime (see SimplifySentenceFocus.tsx)
+  // -- recentering doesn't need to wait on the network.
+  const openSimplifyFocus = useCallback(() => {
+    setIsSimplifyFocusOpen(true);
+    simplifySentence();
+  }, [simplifySentence]);
+
+  // Leaving the focus view WITHOUT having read all the way through it
+  // (Escape, the close button, or retreating past its first unit -- see
+  // SimplifySentenceFocus.tsx) -- closes the whole card, same as
+  // closeWord elsewhere, since there's no sensible smaller state to fall
+  // back to once the student has already jumped into the big recentered
+  // view. Reading position is untouched (closeWord never touches it) --
+  // this is for backing all the way out without the "continue reading
+  // past this sentence" jump that finishing the view for real triggers
+  // (see ReadingScreen.tsx's onExitContinue, which calls
+  // jumpPastSentence + closeWord together instead of just this).
+  const closeSimplifyFocus = useCallback(() => {
+    setIsSimplifyFocusOpen(false);
+    closeWord();
+  }, [closeWord]);
+
   return {
     activeWord,
     isOpen: activeWord !== null,
@@ -444,11 +509,15 @@ export function useTapWord(gradeLevel: number = 9) {
     exampleError,
     tapWord,
     advanceStage,
+    retreatStage,
     closeWord,
     replayAudio,
     simplifiedSentence,
     isSimplifying,
     simplifyError,
     simplifySentence,
+    isSimplifyFocusOpen,
+    openSimplifyFocus,
+    closeSimplifyFocus,
   };
 }

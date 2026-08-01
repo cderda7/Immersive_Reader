@@ -4,8 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Syllable } from "./types";
 import { SAMPLE_SYLLABLES } from "./sampleData";
 
-const RETURN_MODE_MS = 10_000;
-
 // How long to hold before auto-advancing across a boundary, keyed by which
 // boundary it is. The student can't skip ahead by pressing space during the
 // hold (fully blocked, see pauseKindRef below), but doesn't need to press
@@ -143,11 +141,11 @@ export function useReadingState() {
   }, []);
   const breathErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const [returnMode, setReturnMode] = useState(false);
-  const [returnMsLeft, setReturnMsLeft] = useState(RETURN_MODE_MS);
-  const returnDeadlineRef = useRef<number | null>(null);
-
-  const [advanceMode, setAdvanceMode] = useState<AdvanceMode>("syllable");
+  // Paragraph is the coarsest granularity and the friendliest default for
+  // a first-time student (fewer, bigger pauses before they've found their
+  // footing with the controls) -- they can drop down to sentence/word/
+  // syllable from the control bar once they're ready to slow down.
+  const [advanceMode, setAdvanceMode] = useState<AdvanceMode>("paragraph");
 
   const [textSize, setTextSize] = useState(18);
   const [letterSpacing, setLetterSpacing] = useState(0);
@@ -295,6 +293,14 @@ export function useReadingState() {
     setCurrentIndex(previousIndex);
   }, [currentIndex, syllables, advanceMode, cancelPause]);
 
+  // Jumps straight to a word's first syllable, no mode/toggle required --
+  // this is what the hover-triggered "JUMP HERE" chip in ReadingPane.tsx
+  // calls directly (see that component's per-word hover perimeter). Used
+  // to require first switching into a dedicated "Return to…" mode via the
+  // control bar (see git history) before a click on any word counted as a
+  // jump instead of opening tap-word; that extra mode/toggle step is gone
+  // now that the jump affordance appears inline, right where the student
+  // is already hovering.
   const jumpToWord = useCallback(
     (paragraphIdx: number, wordIdx: number) => {
       cancelPause();
@@ -306,41 +312,39 @@ export function useReadingState() {
     [syllables, cancelPause]
   );
 
-  const enterReturnMode = useCallback(() => {
-    cancelPause();
-    setReturnMode(true);
-    returnDeadlineRef.current = Date.now() + RETURN_MODE_MS;
-    setReturnMsLeft(RETURN_MODE_MS);
-  }, [cancelPause]);
-
-  const exitReturnMode = useCallback(() => {
-    setReturnMode(false);
-    returnDeadlineRef.current = null;
-  }, []);
-
-  // Countdown tick + auto-expire for return-to mode.
-  useEffect(() => {
-    if (!returnMode) return;
-    const id = setInterval(() => {
-      const deadline = returnDeadlineRef.current;
-      if (deadline === null) return;
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        exitReturnMode();
-      } else {
-        setReturnMsLeft(remaining);
+  // Jumps to the FIRST syllable of whatever comes right after a given
+  // (paragraphIdx, sentenceIdx) sentence -- called by
+  // SimplifySentenceFocus.tsx once a student has read all the way through
+  // that sentence's ORIGINAL wording inside the focus view, so normal
+  // reading resumes exactly where it would have if they'd just kept
+  // pressing Space through the passage instead of detouring into
+  // simplify -- not the start of the sentence they just read (that would
+  // repeat it) and not the exact index that sentence's last syllable
+  // happened to occupy (that would leave them ON it, one press short of
+  // moving on). Scans forward from wherever that sentence starts for the
+  // first syllable whose (paragraph, sentence) differs -- same
+  // "compare against the far side of a wrap" reasoning findNextIndex uses
+  // for crossing a paragraph boundary, just entered from an arbitrary
+  // sentence instead of the current reading position. A no-op if that
+  // sentence turns out to be the very last one in the passage -- nothing
+  // to jump to, so reading position is simply left wherever it already
+  // was.
+  const jumpPastSentence = useCallback(
+    (paragraphIdx: number, sentenceIdx: number) => {
+      cancelPause();
+      const startOfSentence = syllables.findIndex(
+        (s) => s.paragraph_idx === paragraphIdx && s.sentence_idx === sentenceIdx
+      );
+      if (startOfSentence === -1) return;
+      for (let i = startOfSentence; i < syllables.length; i++) {
+        const s = syllables[i];
+        if (s.paragraph_idx !== paragraphIdx || s.sentence_idx !== sentenceIdx) {
+          setCurrentIndex(i);
+          return;
+        }
       }
-    }, 100);
-    return () => clearInterval(id);
-  }, [returnMode, exitReturnMode]);
-
-  const handleWordClick = useCallback(
-    (paragraphIdx: number, wordIdx: number) => {
-      if (!returnMode) return;
-      jumpToWord(paragraphIdx, wordIdx);
-      exitReturnMode();
     },
-    [returnMode, jumpToWord, exitReturnMode]
+    [syllables, cancelPause]
   );
 
   const loadPassage = useCallback(async (passageText: string) => {
@@ -404,16 +408,11 @@ export function useReadingState() {
     advance,
     retreat,
     jumpToWord,
+    jumpPastSentence,
     isParagraphPause: pauseKind === "paragraph",
     isSentencePause: pauseKind === "sentence",
     pendingSentence,
     isBreathError,
-    returnMode,
-    returnMsLeft,
-    returnModeMs: RETURN_MODE_MS,
-    enterReturnMode,
-    exitReturnMode,
-    handleWordClick,
     advanceMode,
     setAdvanceMode,
     textSize,

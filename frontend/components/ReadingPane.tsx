@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import { groupSyllables, type Syllable } from "@/lib/types";
 import { SENTENCE_PAUSE_MS, type AdvanceMode } from "@/lib/useReadingState";
 
@@ -33,9 +33,14 @@ interface ReadingPaneProps {
   isParagraphPause: boolean;
   isSentencePause: boolean;
   pendingSentence: PendingSentence | null;
-  returnMode: boolean;
   advanceMode: AdvanceMode;
-  onWordClick: (paragraphIdx: number, wordIdx: number) => void;
+  // Jumps reading position straight to a word -- triggered by clicking the
+  // hover-triggered "JUMP HERE" chip (see the per-word wrapper below), not
+  // by any longer-lived mode toggle. Replaces the old dedicated
+  // "Return to…" mode (click any word to jump, entered/exited via
+  // ControlBar) with an inline affordance that appears right where the
+  // student is already looking.
+  onJumpToWord: (paragraphIdx: number, wordIdx: number) => void;
   onWordTap: (
     paragraphIdx: number,
     wordIdx: number,
@@ -125,7 +130,12 @@ type SentenceTierStyle = "off" | "colorContrast" | "backgroundTint";
 // SentenceTierStyle above -- since Word/Syllable mode already spends the
 // tint-background channel on the literal current word/syllable, while
 // Sentence mode has that channel free to use for the sentence itself.
-function tiersFor(mode: AdvanceMode): { sentenceStyle: SentenceTierStyle; word: boolean; syllable: boolean } {
+// Exported for SimplifySentenceFocus.tsx, which reuses just the word/
+// syllable booleans (it has no multi-sentence tinting concern of its
+// own, being scoped to one sentence at a time) so its highlighting stays
+// in lockstep with the rest of the app's advance-by granularity instead
+// of drifting with a second, hand-maintained copy of this logic.
+export function tiersFor(mode: AdvanceMode): { sentenceStyle: SentenceTierStyle; word: boolean; syllable: boolean } {
   return {
     sentenceStyle: mode === "paragraph" ? "off" : mode === "sentence" ? "backgroundTint" : "colorContrast",
     word: mode === "word" || mode === "syllable",
@@ -214,9 +224,8 @@ export function ReadingPane({
   isParagraphPause,
   isSentencePause,
   pendingSentence,
-  returnMode,
   advanceMode,
-  onWordClick,
+  onJumpToWord,
   onWordTap,
   tapWordOpen,
   onSpace,
@@ -228,6 +237,39 @@ export function ReadingPane({
   const current = syllables[currentIndex];
   const grouped = useMemo(() => groupSyllables(syllables), [syllables]);
   const tiers = useMemo(() => tiersFor(advanceMode), [advanceMode]);
+
+  // Which word's "JUMP HERE" chip is currently showing, keyed as
+  // "paragraphIdx-wordIdx". Set by mouseenter on either the word itself OR
+  // the chip below it (both live inside the same .reading-word-wrap, see
+  // the per-word render below) -- and cleared by mouseleave on that same
+  // wrapper, which only actually fires once the pointer leaves BOTH,
+  // since mouseenter/mouseleave are scoped to a DOM subtree, not a
+  // rectangular hit region. The chip is rendered with zero gap directly
+  // under the word (see .jump-here-btn's `top: 100%`) specifically so
+  // there's no dead pixel strip between them for the pointer to slip
+  // through on the way down -- that's what makes moving straight from the
+  // word onto the chip read as one continuous hover instead of a
+  // flicker-close.
+  const [hoveredWordKey, setHoveredWordKey] = useState<string | null>(null);
+
+  // Set right after a JUMP HERE click, briefly. Clicking removes the chip
+  // (see below), which un-covers whatever text was sitting directly
+  // beneath it -- almost always the next line down, since the chip
+  // overlaps into it by design (zero-gap, see .jump-here-btn). Chrome
+  // recomputes :hover for whatever's now topmost under a STATIONARY
+  // cursor the instant that happens, without any real mouse movement, so
+  // without this guard a fresh mouseenter fires for that newly-exposed
+  // word immediately -- reading as "clicking JUMP HERE just opened
+  // another JUMP HERE, right where I clicked." This window only needs to
+  // outlast that one synthetic re-hover; genuine mouse movement after it
+  // works normally again.
+  const suppressHoverRef = useRef(false);
+  const suppressHoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    return () => {
+      if (suppressHoverTimeoutRef.current) clearTimeout(suppressHoverTimeoutRef.current);
+    };
+  }, []);
 
   useEffect(() => {
     currentRef.current?.scrollIntoView({ block: "nearest" });
@@ -268,15 +310,48 @@ export function ReadingPane({
     };
   }, []);
 
-  // Auto-focus the pane on mount so Space advances immediately after a
-  // page load/refresh. Without this, keyboard focus defaults to <body>,
-  // and the onKeyDown handler below (which only fires on this element)
-  // never sees the keypress -- Space is silently swallowed (or just
-  // scrolls the page) until the student clicks into the passage once.
-  // That first required click is what reads as a startup "lag."
+  // Auto-focus the pane on mount, AND every time a new passage/chapter
+  // loads (syllables gets a new array reference from
+  // useReadingState.ts's loadChapter/loadPassage). Without this, keyboard
+  // focus defaults to <body> on first load, or stays on whatever picked
+  // the chapter (LibraryPicker's <select>) on every load after that --
+  // either way the onKeyDown handler below (which only fires on THIS
+  // element) never sees the keypress, so Space/ArrowRight get silently
+  // swallowed (a native <select> treats them as "reopen/change
+  // selection", not "advance reading") until the student clicks into the
+  // passage once. That first required click-to-escape-the-dropdown is
+  // what reads as the reading process not starting on its own.
   useEffect(() => {
     paneRef.current?.focus();
-  }, []);
+  }, [syllables]);
+
+  // Re-focus the pane whenever the tap-word card (in ANY form -- the
+  // ordinary WordInfoPopover, or the full-screen SimplifySentenceFocus
+  // it can open) fully closes, i.e. tapWordOpen goes true -> false.
+  // Without this, closing a card that was opened or interacted with via a
+  // mouse click (tapping a word, clicking "Simplify sentence", clicking
+  // "Replay audio", ...) leaves DOM focus wherever the browser puts it
+  // once the clicked button/element is unmounted -- <body> in Chrome --
+  // since neither popover ever calls .focus() itself, only listens via a
+  // document-level keydown handler while it's mounted. The pane's OWN
+  // onKeyDown below relies on genuinely having DOM focus (a React
+  // synthetic handler only fires for events targeting itself or a
+  // descendant, never one targeting an ancestor like <body>), so once
+  // focus is stranded on <body> and the popover's own listener has been
+  // torn down along with it, the very next Space press hits NO listener
+  // at all and falls through to the browser's native page-down scroll --
+  // exactly the "Space open while a card was open" scroll bug documented
+  // in the onKeyDown handler below, just re-appearing at a different seam
+  // (after close, not during) now that a mouse-click entry point
+  // (SimplifySentenceFocus) exists alongside the keyboard-only
+  // hold-to-define one this pane was originally built around.
+  const wasTapWordOpenRef = useRef(tapWordOpen);
+  useEffect(() => {
+    if (wasTapWordOpenRef.current && !tapWordOpen) {
+      paneRef.current?.focus();
+    }
+    wasTapWordOpenRef.current = tapWordOpen;
+  }, [tapWordOpen]);
 
   return (
     <div
@@ -299,14 +374,14 @@ export function ReadingPane({
         // word instead, with zero movement. ArrowLeft retreats instead, on
         // keydown as before, via its own handler with none of advance()'s
         // pause/breath-error behavior -- see retreat()'s comment in
-        // useReadingState.ts. All three always preventDefault() while the
-        // pane is focused, even when returnMode/tapWordOpen mean nothing
-        // will actually happen: only gating preventDefault() on those same
-        // conditions is exactly what let Space fall through to a real
-        // page-down scroll during those states -- invisible on a short
-        // passage with nothing to scroll, but very visible (and
-        // disorienting) on a tall book chapter. Same risk applies to the
-        // arrow keys, so the same rule.
+        // useReadingState.ts. Both always preventDefault() while the pane
+        // is focused, even when tapWordOpen means nothing will actually
+        // happen: only gating preventDefault() on that same condition is
+        // exactly what let Space fall through to a real page-down scroll
+        // while a card was open -- invisible on a short passage with
+        // nothing to scroll, but very visible (and disorienting) on a tall
+        // book chapter. Same risk applies to the arrow keys, so the same
+        // rule.
         if (e.code === "Space" || e.code === "ArrowRight") {
           e.preventDefault();
           // Ignore the OS's key-repeat auto-fire entirely -- detection here
@@ -315,7 +390,7 @@ export function ReadingPane({
           // repeat event mid-hold would restart the timer from zero and the
           // hold would never reach it.
           if (e.repeat) return;
-          if (returnMode || tapWordOpen) return;
+          if (tapWordOpen) return;
           // Record physical down-state in the SHARED tracker (see
           // ReadingPane's heldKeysRef prop / ReadingScreen's comment) --
           // deliberately AFTER the tapWordOpen check above, not before
@@ -340,7 +415,7 @@ export function ReadingPane({
           }, HOLD_TO_DEFINE_MS);
         } else if (e.code === "ArrowLeft") {
           e.preventDefault();
-          if (!returnMode && !tapWordOpen) {
+          if (!tapWordOpen) {
             onRetreat();
           }
         }
@@ -360,7 +435,7 @@ export function ReadingPane({
           // the timer and perform the normal deferred advance.
           clearTimeout(holdTimeoutRef.current);
           holdTimeoutRef.current = null;
-          if (!returnMode && !tapWordOpen) {
+          if (!tapWordOpen) {
             onSpace();
           }
         } else if (holdConsumedRef.current) {
@@ -420,6 +495,8 @@ export function ReadingPane({
                   {run.wordIndices.map((wordIdx) => {
                     const sylList = words[wordIdx];
                     const isCurrentWord = isCurrentParagraph && current?.word_idx === wordIdx;
+                    const wordKey = `${paragraphIdx}-${wordIdx}`;
+                    const isHovered = hoveredWordKey === wordKey;
 
                     // isCurrentWord/isCurrentSyllable are computed
                     // unconditionally regardless of which tiers are active
@@ -430,36 +507,85 @@ export function ReadingPane({
                     return (
                       <span
                         key={wordIdx}
-                        data-paragraph-idx={paragraphIdx}
-                        data-word-idx={wordIdx}
-                        data-sentence-idx={run.sentenceIdx}
-                        className={`reading-word${isCurrentWord && tiers.word ? " reading-word--current" : ""}${
-                          returnMode ? " reading-word--clickable" : " reading-word--tappable"
-                        }`}
-                        onClick={() => {
-                          if (returnMode) {
-                            onWordClick(paragraphIdx, wordIdx);
-                          } else if (run.sentenceIdx !== undefined) {
-                            const wordText = sylList.map((s) => s.text).join("");
-                            const sentenceText = getSentenceText(words, run.sentenceIdx);
-                            onWordTap(paragraphIdx, wordIdx, run.sentenceIdx, wordText, sentenceText);
-                          }
+                        className="reading-word-wrap"
+                        onMouseEnter={() => {
+                          // Suppress while a tap-word card is open -- a
+                          // JUMP HERE chip popping up under an unrelated
+                          // word while the student is mid-lookup elsewhere
+                          // would just be visual noise competing with it.
+                          if (tapWordOpen) return;
+                          // Suppress the synthetic re-hover that follows
+                          // right on the heels of a JUMP HERE click -- see
+                          // suppressHoverRef's comment above.
+                          if (suppressHoverRef.current) return;
+                          setHoveredWordKey(wordKey);
                         }}
+                        onMouseLeave={() =>
+                          setHoveredWordKey((cur) => (cur === wordKey ? null : cur))
+                        }
                       >
-                        {sylList.map((syl, syllableIdx) => {
-                          const isCurrentSyllable = isCurrentWord && current?.syllable_idx === syllableIdx;
-                          return (
-                            <span
-                              key={syllableIdx}
-                              ref={isCurrentSyllable ? currentRef : undefined}
-                              className={`reading-syllable${
-                                isCurrentSyllable && tiers.syllable ? " reading-syllable--current" : ""
-                              }`}
-                            >
-                              {syl.text}
-                            </span>
-                          );
-                        })}
+                        <span
+                          data-paragraph-idx={paragraphIdx}
+                          data-word-idx={wordIdx}
+                          data-sentence-idx={run.sentenceIdx}
+                          className={`reading-word${isCurrentWord && tiers.word ? " reading-word--current" : ""} reading-word--tappable${
+                            isHovered ? " reading-word--hover" : ""
+                          }`}
+                          onClick={() => {
+                            if (run.sentenceIdx !== undefined) {
+                              const wordText = sylList.map((s) => s.text).join("");
+                              const sentenceText = getSentenceText(words, run.sentenceIdx);
+                              onWordTap(paragraphIdx, wordIdx, run.sentenceIdx, wordText, sentenceText);
+                            }
+                          }}
+                        >
+                          {sylList.map((syl, syllableIdx) => {
+                            const isCurrentSyllable = isCurrentWord && current?.syllable_idx === syllableIdx;
+                            return (
+                              <span
+                                key={syllableIdx}
+                                ref={isCurrentSyllable ? currentRef : undefined}
+                                className={`reading-syllable${
+                                  isCurrentSyllable && tiers.syllable ? " reading-syllable--current" : ""
+                                }`}
+                              >
+                                {syl.text}
+                              </span>
+                            );
+                          })}
+                        </span>
+                        {isHovered && (
+                          <button
+                            type="button"
+                            className="jump-here-btn"
+                            // Both the word span above and this chip live
+                            // inside the same .reading-word-wrap, so a
+                            // click here never also bubbles into a
+                            // DIFFERENT word's onClick -- no
+                            // stopPropagation needed for correctness, just
+                            // clearing the hover state so the chip doesn't
+                            // linger, visually stale, over the word's new
+                            // reading position after the jump. Also arms
+                            // suppressHoverRef briefly -- see its comment
+                            // above -- so removing this button doesn't
+                            // immediately re-trigger a hover for whatever
+                            // text it was overlapping.
+                            onClick={() => {
+                              setHoveredWordKey(null);
+                              suppressHoverRef.current = true;
+                              if (suppressHoverTimeoutRef.current) {
+                                clearTimeout(suppressHoverTimeoutRef.current);
+                              }
+                              suppressHoverTimeoutRef.current = setTimeout(() => {
+                                suppressHoverRef.current = false;
+                                suppressHoverTimeoutRef.current = null;
+                              }, 250);
+                              onJumpToWord(paragraphIdx, wordIdx);
+                            }}
+                          >
+                            JUMP HERE
+                          </button>
+                        )}
                       </span>
                     );
                   })}

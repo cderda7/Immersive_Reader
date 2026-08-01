@@ -4,14 +4,14 @@ import { useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useReadingState, type AdvanceMode } from "@/lib/useReadingState";
 import { useTapWord } from "@/lib/useTapWord";
-import { neighboringSentenceText } from "@/lib/types";
+import { sentenceSyllables, sentenceFocusContext } from "@/lib/types";
 import { ReadingPane } from "./ReadingPane";
-import { ReturnBanner } from "./ReturnBanner";
 import { ControlBar } from "./ControlBar";
 import { LibraryPicker } from "./LibraryPicker";
 import { PassageLoader } from "./PassageLoader";
 import { BreathBanner } from "./BreathBanner";
 import { WordInfoPopover } from "./WordInfoPopover";
+import { SimplifySentenceFocus } from "./SimplifySentenceFocus";
 
 // Singular noun for the hint line's "advance one ___ at a time" --
 // mirrors ControlBar.tsx's ADVANCE_MODES labels, just lowercase/singular
@@ -88,19 +88,8 @@ export function ReadingScreen() {
   return (
     <div className="app-frame">
       <header className="app-header">
-        <h1>Immersive Reader — passage view</h1>
-        <div className="legend">
-          <LegendItem swatchClass="swatch--paragraph" label="paragraph" />
-          <LegendItem swatchClass="swatch--word" label="word" />
-          <LegendItem swatchClass="swatch--syllable" label="syllable" />
-        </div>
+        <h1>Immerse — passage view</h1>
       </header>
-
-      <ReturnBanner
-        active={state.returnMode}
-        msLeft={state.returnMsLeft}
-        totalMs={state.returnModeMs}
-      />
 
       <LibraryPicker
         onLoadChapter={state.loadChapter}
@@ -115,9 +104,8 @@ export function ReadingScreen() {
           isParagraphPause={state.isParagraphPause}
           isSentencePause={state.isSentencePause}
           pendingSentence={state.pendingSentence}
-          returnMode={state.returnMode}
           advanceMode={state.advanceMode}
-          onWordClick={state.handleWordClick}
+          onJumpToWord={state.jumpToWord}
           onWordTap={tapWord.tapWord}
           tapWordOpen={tapWord.isOpen}
           onSpace={state.advance}
@@ -125,7 +113,7 @@ export function ReadingScreen() {
           heldKeysRef={heldKeysRef}
         />
         <BreathBanner active={state.isBreathError} />
-        {tapWord.activeWord && (
+        {tapWord.activeWord && !tapWord.isSimplifyFocusOpen && (
           <WordInfoPopover
             activeWord={tapWord.activeWord}
             stage={tapWord.stage}
@@ -135,24 +123,35 @@ export function ReadingScreen() {
             exampleError={tapWord.exampleError}
             onClose={tapWord.closeWord}
             onAdvance={tapWord.advanceStage}
+            onRetreat={tapWord.retreatStage}
             onReplayAudio={tapWord.replayAudio}
+            onOpenSimplifyFocus={tapWord.openSimplifyFocus}
+            heldKeysRef={heldKeysRef}
+          />
+        )}
+        {tapWord.activeWord && tapWord.isSimplifyFocusOpen && (
+          <SimplifySentenceFocus
+            originalSyllables={sentenceSyllables(
+              state.syllables,
+              tapWord.activeWord.paragraphIdx,
+              tapWord.activeWord.sentenceIdx
+            )}
             simplifiedSentence={tapWord.simplifiedSentence}
             isSimplifying={tapWord.isSimplifying}
             simplifyError={tapWord.simplifyError}
-            onSimplifySentence={tapWord.simplifySentence}
-            prevSentenceText={neighboringSentenceText(
+            onRetrySimplify={tapWord.simplifySentence}
+            advanceMode={state.advanceMode}
+            context={sentenceFocusContext(
               state.syllables,
               tapWord.activeWord.paragraphIdx,
-              tapWord.activeWord.sentenceIdx,
-              "before"
+              tapWord.activeWord.sentenceIdx
             )}
-            nextSentenceText={neighboringSentenceText(
-              state.syllables,
-              tapWord.activeWord.paragraphIdx,
-              tapWord.activeWord.sentenceIdx,
-              "after"
-            )}
-            heldKeysRef={heldKeysRef}
+            onClose={tapWord.closeSimplifyFocus}
+            onExitContinue={() => {
+              if (!tapWord.activeWord) return;
+              state.jumpPastSentence(tapWord.activeWord.paragraphIdx, tapWord.activeWord.sentenceIdx);
+              tapWord.closeSimplifyFocus();
+            }}
           />
         )}
       </div>
@@ -172,15 +171,8 @@ export function ReadingScreen() {
         setLetterSpacing={state.setLetterSpacing}
         lineHeight={state.lineHeight}
         setLineHeight={state.setLineHeight}
-        returnMode={state.returnMode}
         advanceMode={state.advanceMode}
         setAdvanceMode={state.setAdvanceMode}
-        onToggleReturnMode={() => {
-          // Return-to mode repurposes word clicks for jump-to-word --
-          // close any open tap-word card first so the two don't overlap.
-          tapWord.closeWord();
-          state.returnMode ? state.exitReturnMode() : state.enterReturnMode();
-        }}
       />
 
       <p className="hint" aria-live="polite">
@@ -190,19 +182,10 @@ export function ReadingScreen() {
           <>
             Click the passage, then press <kbd>Space</kbd> or <kbd>→</kbd> to advance, or{" "}
             <kbd>←</kbd> to go back, one {ADVANCE_MODE_LABEL[state.advanceMode]} at a time.
-            {!state.returnMode && " Tap any word to look it up."}
+            {" "}Tap any word to look it up, or hover it for a JUMP HERE shortcut.
           </>
         )}
       </p>
     </div>
-  );
-}
-
-function LegendItem({ swatchClass, label }: { swatchClass: string; label: string }) {
-  return (
-    <span className="legend-item">
-      <span className={`swatch ${swatchClass}`} />
-      {label}
-    </span>
   );
 }
