@@ -4,8 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Syllable } from "./types";
 import { SAMPLE_SYLLABLES } from "./sampleData";
 
-const RETURN_MODE_MS = 10_000;
-
 // How long to hold before auto-advancing across a boundary, keyed by which
 // boundary it is. The student can't skip ahead by pressing space during the
 // hold (fully blocked, see pauseKindRef below), but doesn't need to press
@@ -142,10 +140,6 @@ export function useReadingState() {
     setIsBreathErrorState(val);
   }, []);
   const breathErrorTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-
-  const [returnMode, setReturnMode] = useState(false);
-  const [returnMsLeft, setReturnMsLeft] = useState(RETURN_MODE_MS);
-  const returnDeadlineRef = useRef<number | null>(null);
 
   // Paragraph is the coarsest granularity and the friendliest default for
   // a first-time student (fewer, bigger pauses before they've found their
@@ -299,6 +293,14 @@ export function useReadingState() {
     setCurrentIndex(previousIndex);
   }, [currentIndex, syllables, advanceMode, cancelPause]);
 
+  // Jumps straight to a word's first syllable, no mode/toggle required --
+  // this is what the hover-triggered "JUMP HERE" chip in ReadingPane.tsx
+  // calls directly (see that component's per-word hover perimeter). Used
+  // to require first switching into a dedicated "Return to…" mode via the
+  // control bar (see git history) before a click on any word counted as a
+  // jump instead of opening tap-word; that extra mode/toggle step is gone
+  // now that the jump affordance appears inline, right where the student
+  // is already hovering.
   const jumpToWord = useCallback(
     (paragraphIdx: number, wordIdx: number) => {
       cancelPause();
@@ -308,43 +310,6 @@ export function useReadingState() {
       if (target !== -1) setCurrentIndex(target);
     },
     [syllables, cancelPause]
-  );
-
-  const enterReturnMode = useCallback(() => {
-    cancelPause();
-    setReturnMode(true);
-    returnDeadlineRef.current = Date.now() + RETURN_MODE_MS;
-    setReturnMsLeft(RETURN_MODE_MS);
-  }, [cancelPause]);
-
-  const exitReturnMode = useCallback(() => {
-    setReturnMode(false);
-    returnDeadlineRef.current = null;
-  }, []);
-
-  // Countdown tick + auto-expire for return-to mode.
-  useEffect(() => {
-    if (!returnMode) return;
-    const id = setInterval(() => {
-      const deadline = returnDeadlineRef.current;
-      if (deadline === null) return;
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) {
-        exitReturnMode();
-      } else {
-        setReturnMsLeft(remaining);
-      }
-    }, 100);
-    return () => clearInterval(id);
-  }, [returnMode, exitReturnMode]);
-
-  const handleWordClick = useCallback(
-    (paragraphIdx: number, wordIdx: number) => {
-      if (!returnMode) return;
-      jumpToWord(paragraphIdx, wordIdx);
-      exitReturnMode();
-    },
-    [returnMode, jumpToWord, exitReturnMode]
   );
 
   const loadPassage = useCallback(async (passageText: string) => {
@@ -412,12 +377,6 @@ export function useReadingState() {
     isSentencePause: pauseKind === "sentence",
     pendingSentence,
     isBreathError,
-    returnMode,
-    returnMsLeft,
-    returnModeMs: RETURN_MODE_MS,
-    enterReturnMode,
-    exitReturnMode,
-    handleWordClick,
     advanceMode,
     setAdvanceMode,
     textSize,

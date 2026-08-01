@@ -6,7 +6,6 @@ import { useReadingState, type AdvanceMode } from "@/lib/useReadingState";
 import { useTapWord } from "@/lib/useTapWord";
 import { neighboringSentenceText } from "@/lib/types";
 import { ReadingPane } from "./ReadingPane";
-import { ReturnBanner } from "./ReturnBanner";
 import { ControlBar } from "./ControlBar";
 import { LibraryPicker } from "./LibraryPicker";
 import { PassageLoader } from "./PassageLoader";
@@ -96,12 +95,6 @@ export function ReadingScreen() {
         </div>
       </header>
 
-      <ReturnBanner
-        active={state.returnMode}
-        msLeft={state.returnMsLeft}
-        totalMs={state.returnModeMs}
-      />
-
       <LibraryPicker
         onLoadChapter={state.loadChapter}
         isLoading={state.isLoading}
@@ -115,9 +108,8 @@ export function ReadingScreen() {
           isParagraphPause={state.isParagraphPause}
           isSentencePause={state.isSentencePause}
           pendingSentence={state.pendingSentence}
-          returnMode={state.returnMode}
           advanceMode={state.advanceMode}
-          onWordClick={state.handleWordClick}
+          onJumpToWord={state.jumpToWord}
           onWordTap={tapWord.tapWord}
           tapWordOpen={tapWord.isOpen}
           onSpace={state.advance}
@@ -172,15 +164,8 @@ export function ReadingScreen() {
         setLetterSpacing={state.setLetterSpacing}
         lineHeight={state.lineHeight}
         setLineHeight={state.setLineHeight}
-        returnMode={state.returnMode}
         advanceMode={state.advanceMode}
         setAdvanceMode={state.setAdvanceMode}
-        onToggleReturnMode={() => {
-          // Return-to mode repurposes word clicks for jump-to-word --
-          // close any open tap-word card first so the two don't overlap.
-          tapWord.closeWord();
-          state.returnMode ? state.exitReturnMode() : state.enterReturnMode();
-        }}
       />
 
       <p className="hint" aria-live="polite">
@@ -190,7 +175,7 @@ export function ReadingScreen() {
           <>
             Click the passage, then press <kbd>Space</kbd> or <kbd>→</kbd> to advance, or{" "}
             <kbd>←</kbd> to go back, one {ADVANCE_MODE_LABEL[state.advanceMode]} at a time.
-            {!state.returnMode && " Tap any word to look it up."}
+            {" "}Tap any word to look it up, or hover it for a JUMP HERE shortcut.
           </>
         )}
       </p>

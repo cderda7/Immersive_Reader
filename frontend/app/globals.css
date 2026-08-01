@@ -190,17 +190,11 @@ body {
 .reading-word--current {
   background: var(--tier-word);
 }
-.reading-word--clickable {
-  cursor: pointer;
-}
-.reading-word--clickable:hover {
-  outline: 2px dashed var(--tier-syllable);
-  outline-offset: 2px;
-}
 .reading-word--tappable {
   cursor: pointer;
 }
-.reading-word--tappable:hover {
+.reading-word--tappable:hover,
+.reading-word--hover {
   text-decoration: underline dotted var(--muted);
   text-underline-offset: 3px;
 }
@@ -208,6 +202,48 @@ body {
   background: var(--tier-syllable);
   border-radius: 3px;
   padding: 0 1px;
+}
+
+/* Wraps one word AND its hover-triggered .jump-here-btn (see
+   ReadingPane.tsx) in a single positioning context, so the button can be
+   anchored directly under the word with `position: absolute`. Plain
+   inline-block with no size/spacing of its own -- shrink-to-fit sizing
+   means it hugs .reading-word's existing box (including that span's own
+   margin-right), so introducing this wrapper doesn't change word spacing
+   or line-wrapping at all. */
+.reading-word-wrap {
+  position: relative;
+  display: inline-block;
+}
+/* Deliberately `top: 100%` with NO gap (no margin-top) -- touching the
+   word's bottom edge exactly. mouseenter/mouseleave are scoped to the DOM
+   subtree under .reading-word-wrap (see that component's comment), not a
+   rectangular hit region, so moving the pointer from the word straight
+   down onto this button never leaves the wrapper's subtree as long as
+   there's no dead pixel strip between them for it to pass through first --
+   a real gap here would let the pointer cross into whatever's rendered
+   just past the wrapper's own box (often the next line of text) and fire
+   a premature mouseleave, closing the chip before the click lands. */
+.jump-here-btn {
+  position: absolute;
+  top: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 15;
+  background: #d9730d;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+  cursor: pointer;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.18);
+}
+.jump-here-btn:hover {
+  background: #c1650a;
 }
 
 /* Tap-word card (WordInfoPopover.tsx). position: fixed is set inline
@@ -337,29 +373,6 @@ body {
   padding-top: 4px;
 }
 
-.return-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 8px 28px;
-  background: #fff4d6;
-  border-bottom: 1px solid #f0d98c;
-  font-size: 13px;
-  color: #7a5c00;
-}
-.return-timer-track {
-  width: 120px;
-  height: 5px;
-  background: #f0d98c;
-  border-radius: 3px;
-  overflow: hidden;
-  margin-left: 12px;
-}
-.return-timer-fill {
-  height: 100%;
-  background: #b8860b;
-}
-
 /* LibraryPicker.tsx -- the primary content-loading control, styled like
    the existing .control-group chrome (light bordered pill) so it reads
    as part of the same control-surface language as the settings bar
@@ -480,9 +493,8 @@ body {
 
 /* "Advance by" segmented control (ControlBar.tsx) -- same chrome as
    .control-group (light bordered pill), but holding a row of toggleable
-   buttons instead of a stepper, matching .return-btn's active-state
-   pattern (solid tint, not just an outline) so the selected granularity
-   reads clearly at a glance. */
+   buttons instead of a stepper, with a solid-tint active state (not just
+   an outline) so the selected granularity reads clearly at a glance. */
 .advance-mode-group {
   display: flex;
   align-items: center;
@@ -511,6 +523,10 @@ body {
   font-weight: 600;
 }
 
+/* Generic secondary-action button chrome -- named for its original use
+   (the old "Return to…" mode toggle, since replaced by ReadingPane.tsx's
+   inline hover "JUMP HERE" chip), but still used as-is by
+   PassageLoader.tsx's "Load into reading pane" button. */
 .return-btn {
   background: var(--tier-syllable);
   /* --tier-syllable is a light warm tint now, not the old dark blue --
@@ -529,9 +545,6 @@ body {
 .return-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-}
-.return-btn--active {
-  background: #b8860b;
 }
 .return-btn:hover:not(:disabled) {
   opacity: 0.9;

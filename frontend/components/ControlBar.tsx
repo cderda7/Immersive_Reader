@@ -7,8 +7,6 @@ interface ControlBarProps {
   setLetterSpacing: (v: number) => void;
   lineHeight: number;
   setLineHeight: (v: number) => void;
-  returnMode: boolean;
-  onToggleReturnMode: () => void;
   advanceMode: AdvanceMode;
   setAdvanceMode: (m: AdvanceMode) => void;
 }
@@ -34,8 +32,6 @@ export function ControlBar({
   setLetterSpacing,
   lineHeight,
   setLineHeight,
-  returnMode,
-  onToggleReturnMode,
   advanceMode,
   setAdvanceMode,
 }: ControlBarProps) {
@@ -80,12 +76,6 @@ export function ControlBar({
             </button>
           ))}
         </div>
-        <button
-          className={`return-btn${returnMode ? " return-btn--active" : ""}`}
-          onClick={onToggleReturnMode}
-        >
-          {returnMode ? "Return to… (active)" : "Return to…"}
-        </button>
       </div>
     </div>
   );
