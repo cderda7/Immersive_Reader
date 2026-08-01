@@ -60,6 +60,21 @@ a larger word list (wordfreq's top_n_list accepts any N), or grow it word-by-
 word from audit_syllables.py findings against your actual passages -- either
 way, verify each break before adding it, the same "AI proposes, human
 approves" pattern used for question generation elsewhere in this project.
+That's exactly how later entries like "ago" got added: not from the sweep
+above, but from reading real book text (Moby Dick ch. 1) and catching a
+miss the frequency list alone didn't surface.
+
+PUNCTUATION-ONLY TOKENS (e.g. a bare "--" used as a parenthetical aside, or
+the standalone "-" that the en/em-dash mapping above produces) are never
+emitted as their own syllable/"word" -- see the `pending_prefix` handling
+in syllabify() below. A token with no word characters at all has nothing
+for _WORD_RE's lead/trail groups to attach to, so rendering it standalone
+would make it look and advance like a real syllable when it isn't one.
+Instead its text is carried forward and prepended onto the NEXT real
+word's leading edge (so it reads attached to the syllable that follows
+it, the same direction a reader's eye carries a mid-sentence dash) or, if
+nothing follows it in the paragraph, appended onto the END of the last
+syllable already emitted, so it's never silently dropped either way.
 """
 
 import re
@@ -80,6 +95,7 @@ SYLLABLE_OVERRIDES: dict[str, list[str]] = {
     "added": ["add", "ed"],
     "again": ["a", "gain"],
     "against": ["a", "gainst"],
+    "ago": ["a", "go"],
     "agree": ["a", "gree"],
     "ahead": ["a", "head"],
     "alone": ["a", "lone"],
@@ -336,17 +352,31 @@ def syllabify(passage: str) -> list[dict]:
     flat: list[Syllable] = []
     for p_idx, paragraph in enumerate(paragraphs):
         w_idx = 0
+        # Holds punctuation-only tokens (see module docstring) until the
+        # next real word shows up to attach them to. Scoped per-paragraph
+        # (not per-sentence) since a stray dash could in principle be the
+        # last token _split_sentences hands back for one sentence, with
+        # the actual next word starting the following sentence.
+        pending_prefix = ""
         for sent_idx, sentence in enumerate(_split_sentences(paragraph)):
             for token in sentence.split():
                 match = _WORD_RE.match(token)
                 lead, core, trail = match.groups() if match else ("", token, "")
-                # A punctuation-only token (e.g. a bare "--" standing on
-                # its own, common as a parenthetical dash in real prose)
-                # has an empty core -- lead+trail together already
-                # reconstruct the whole token, so the base here must be
-                # "", not `token` again, or the punctuation gets doubled
-                # once lead/trail are reattached below.
-                syl_parts = _syllabify_word(core) if core else [""]
+
+                if not core:
+                    # Whole token is punctuation (e.g. the standalone "-"
+                    # left over from em/en-dash normalization, or a bare
+                    # "--" aside) -- hold it rather than emit it as its
+                    # own fake "word"; it gets prepended onto the next
+                    # real word's leading edge below.
+                    pending_prefix += lead + trail
+                    continue
+
+                if pending_prefix:
+                    lead = pending_prefix + lead
+                    pending_prefix = ""
+
+                syl_parts = _syllabify_word(core)
 
                 # Reattach punctuation to the first/last syllable of the word.
                 if lead:
@@ -367,5 +397,11 @@ def syllabify(passage: str) -> list[dict]:
                         )
                     )
                 w_idx += 1
+
+        if pending_prefix and flat:
+            # Nothing followed this punctuation anywhere else in the
+            # paragraph -- attach it to the end of the last syllable
+            # already emitted instead of dropping it silently.
+            flat[-1].text += pending_prefix
 
     return [asdict(s) for s in flat]
