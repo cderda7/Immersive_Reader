@@ -147,7 +147,11 @@ export function useReadingState() {
   const [returnMsLeft, setReturnMsLeft] = useState(RETURN_MODE_MS);
   const returnDeadlineRef = useRef<number | null>(null);
 
-  const [advanceMode, setAdvanceMode] = useState<AdvanceMode>("syllable");
+  // Paragraph is the coarsest granularity and the friendliest default for
+  // a first-time student (fewer, bigger pauses before they've found their
+  // footing with the controls) -- they can drop down to sentence/word/
+  // syllable from the control bar once they're ready to slow down.
+  const [advanceMode, setAdvanceMode] = useState<AdvanceMode>("paragraph");
 
   const [textSize, setTextSize] = useState(18);
   const [letterSpacing, setLetterSpacing] = useState(0);

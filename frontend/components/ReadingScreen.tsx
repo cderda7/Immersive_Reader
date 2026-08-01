@@ -88,7 +88,7 @@ export function ReadingScreen() {
   return (
     <div className="app-frame">
       <header className="app-header">
-        <h1>Immersive Reader — passage view</h1>
+        <h1>Immerse — passage view</h1>
         <div className="legend">
           <LegendItem swatchClass="swatch--paragraph" label="paragraph" />
           <LegendItem swatchClass="swatch--word" label="word" />

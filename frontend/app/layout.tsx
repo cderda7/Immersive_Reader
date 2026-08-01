@@ -12,7 +12,7 @@ const lexend = Lexend({
 });
 
 export const metadata: Metadata = {
-  title: "Immersive Reader",
+  title: "Immerse",
   description: "Syllable-paced reading practice for grades 7-12.",
 };
 

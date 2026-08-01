@@ -268,15 +268,20 @@ export function ReadingPane({
     };
   }, []);
 
-  // Auto-focus the pane on mount so Space advances immediately after a
-  // page load/refresh. Without this, keyboard focus defaults to <body>,
-  // and the onKeyDown handler below (which only fires on this element)
-  // never sees the keypress -- Space is silently swallowed (or just
-  // scrolls the page) until the student clicks into the passage once.
-  // That first required click is what reads as a startup "lag."
+  // Auto-focus the pane on mount, AND every time a new passage/chapter
+  // loads (syllables gets a new array reference from
+  // useReadingState.ts's loadChapter/loadPassage). Without this, keyboard
+  // focus defaults to <body> on first load, or stays on whatever picked
+  // the chapter (LibraryPicker's <select>) on every load after that --
+  // either way the onKeyDown handler below (which only fires on THIS
+  // element) never sees the keypress, so Space/ArrowRight get silently
+  // swallowed (a native <select> treats them as "reopen/change
+  // selection", not "advance reading") until the student clicks into the
+  // passage once. That first required click-to-escape-the-dropdown is
+  // what reads as the reading process not starting on its own.
   useEffect(() => {
     paneRef.current?.focus();
-  }, []);
+  }, [syllables]);
 
   return (
     <div
