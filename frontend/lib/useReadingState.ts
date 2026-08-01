@@ -312,6 +312,41 @@ export function useReadingState() {
     [syllables, cancelPause]
   );
 
+  // Jumps to the FIRST syllable of whatever comes right after a given
+  // (paragraphIdx, sentenceIdx) sentence -- called by
+  // SimplifySentenceFocus.tsx once a student has read all the way through
+  // that sentence's ORIGINAL wording inside the focus view, so normal
+  // reading resumes exactly where it would have if they'd just kept
+  // pressing Space through the passage instead of detouring into
+  // simplify -- not the start of the sentence they just read (that would
+  // repeat it) and not the exact index that sentence's last syllable
+  // happened to occupy (that would leave them ON it, one press short of
+  // moving on). Scans forward from wherever that sentence starts for the
+  // first syllable whose (paragraph, sentence) differs -- same
+  // "compare against the far side of a wrap" reasoning findNextIndex uses
+  // for crossing a paragraph boundary, just entered from an arbitrary
+  // sentence instead of the current reading position. A no-op if that
+  // sentence turns out to be the very last one in the passage -- nothing
+  // to jump to, so reading position is simply left wherever it already
+  // was.
+  const jumpPastSentence = useCallback(
+    (paragraphIdx: number, sentenceIdx: number) => {
+      cancelPause();
+      const startOfSentence = syllables.findIndex(
+        (s) => s.paragraph_idx === paragraphIdx && s.sentence_idx === sentenceIdx
+      );
+      if (startOfSentence === -1) return;
+      for (let i = startOfSentence; i < syllables.length; i++) {
+        const s = syllables[i];
+        if (s.paragraph_idx !== paragraphIdx || s.sentence_idx !== sentenceIdx) {
+          setCurrentIndex(i);
+          return;
+        }
+      }
+    },
+    [syllables, cancelPause]
+  );
+
   const loadPassage = useCallback(async (passageText: string) => {
     const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
     setIsLoading(true);
@@ -373,6 +408,7 @@ export function useReadingState() {
     advance,
     retreat,
     jumpToWord,
+    jumpPastSentence,
     isParagraphPause: pauseKind === "paragraph",
     isSentencePause: pauseKind === "sentence",
     pendingSentence,

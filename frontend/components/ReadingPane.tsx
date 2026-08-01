@@ -130,7 +130,12 @@ type SentenceTierStyle = "off" | "colorContrast" | "backgroundTint";
 // SentenceTierStyle above -- since Word/Syllable mode already spends the
 // tint-background channel on the literal current word/syllable, while
 // Sentence mode has that channel free to use for the sentence itself.
-function tiersFor(mode: AdvanceMode): { sentenceStyle: SentenceTierStyle; word: boolean; syllable: boolean } {
+// Exported for SimplifySentenceFocus.tsx, which reuses just the word/
+// syllable booleans (it has no multi-sentence tinting concern of its
+// own, being scoped to one sentence at a time) so its highlighting stays
+// in lockstep with the rest of the app's advance-by granularity instead
+// of drifting with a second, hand-maintained copy of this logic.
+export function tiersFor(mode: AdvanceMode): { sentenceStyle: SentenceTierStyle; word: boolean; syllable: boolean } {
   return {
     sentenceStyle: mode === "paragraph" ? "off" : mode === "sentence" ? "backgroundTint" : "colorContrast",
     word: mode === "word" || mode === "syllable",
@@ -319,6 +324,34 @@ export function ReadingPane({
   useEffect(() => {
     paneRef.current?.focus();
   }, [syllables]);
+
+  // Re-focus the pane whenever the tap-word card (in ANY form -- the
+  // ordinary WordInfoPopover, or the full-screen SimplifySentenceFocus
+  // it can open) fully closes, i.e. tapWordOpen goes true -> false.
+  // Without this, closing a card that was opened or interacted with via a
+  // mouse click (tapping a word, clicking "Simplify sentence", clicking
+  // "Replay audio", ...) leaves DOM focus wherever the browser puts it
+  // once the clicked button/element is unmounted -- <body> in Chrome --
+  // since neither popover ever calls .focus() itself, only listens via a
+  // document-level keydown handler while it's mounted. The pane's OWN
+  // onKeyDown below relies on genuinely having DOM focus (a React
+  // synthetic handler only fires for events targeting itself or a
+  // descendant, never one targeting an ancestor like <body>), so once
+  // focus is stranded on <body> and the popover's own listener has been
+  // torn down along with it, the very next Space press hits NO listener
+  // at all and falls through to the browser's native page-down scroll --
+  // exactly the "Space open while a card was open" scroll bug documented
+  // in the onKeyDown handler below, just re-appearing at a different seam
+  // (after close, not during) now that a mouse-click entry point
+  // (SimplifySentenceFocus) exists alongside the keyboard-only
+  // hold-to-define one this pane was originally built around.
+  const wasTapWordOpenRef = useRef(tapWordOpen);
+  useEffect(() => {
+    if (wasTapWordOpenRef.current && !tapWordOpen) {
+      paneRef.current?.focus();
+    }
+    wasTapWordOpenRef.current = tapWordOpen;
+  }, [tapWordOpen]);
 
   return (
     <div

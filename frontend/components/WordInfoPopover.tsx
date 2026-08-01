@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from "react";
-import type { ActiveWord, SimplifiedSentence, TapWordStage } from "@/lib/useTapWord";
+import type { ActiveWord, TapWordStage } from "@/lib/useTapWord";
 import type { WordInfo } from "@/lib/types";
 
 interface WordInfoPopoverProps {
@@ -21,21 +21,13 @@ interface WordInfoPopoverProps {
   // useTapWord.ts's retreatStage.
   onRetreat: () => void;
   onReplayAudio: () => void;
-  // "Simplify sentence" -- independent of the stage cycle above, see
-  // useTapWord.ts's simplifySentence. Available the instant the card
-  // opens, not gated behind wordInfo/isLoading/error the way the stage
-  // content is, since it only needs activeWord.sentenceText.
-  simplifiedSentence: SimplifiedSentence | null;
-  isSimplifying: boolean;
-  simplifyError: string | null;
-  onSimplifySentence: () => void;
-  // Surrounding context (see lib/types.ts's neighboringSentenceText) --
-  // shown alongside the simplified comparison once it's requested, so a
-  // student can place the simplified wording back into the flow of the
-  // passage instead of judging it in isolation. null when the tapped
-  // sentence is the very first/last one in the passage.
-  prevSentenceText: string | null;
-  nextSentenceText: string | null;
+  // "Simplify sentence" -- opens the full-screen recentered
+  // SimplifySentenceFocus view (see useTapWord.ts's openSimplifyFocus)
+  // instead of expanding inline here. ReadingScreen.tsx swaps this
+  // component out for that one the instant it's opened, so this button is
+  // this panel's ENTIRE job now -- no loading/error/comparison state of
+  // its own to track anymore, that all lives in the focus view.
+  onOpenSimplifyFocus: () => void;
   // Shared with ReadingPane -- see ReadingScreen's comment where this is
   // created. NOT a local Set here on purpose: a fresh, empty Set at
   // mount time would have no way to know Space/ArrowRight was already
@@ -74,12 +66,7 @@ export function WordInfoPopover({
   onAdvance,
   onRetreat,
   onReplayAudio,
-  simplifiedSentence,
-  isSimplifying,
-  simplifyError,
-  onSimplifySentence,
-  prevSentenceText,
-  nextSentenceText,
+  onOpenSimplifyFocus,
   heldKeysRef,
 }: WordInfoPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -328,10 +315,13 @@ export function WordInfoPopover({
           morphology/hear-aloud/example flow above, which is scoped to just
           the tapped WORD -- so it gets its own space below reading
           position instead of competing with that content for room in one
-          box. No onClick={onAdvance} here (unlike the card above): clicks
-          in this panel are about simplifying, not the word-info stage
-          cycle, so there's nothing for the button below to stopPropagation
-          against anymore either. */}
+          box. Just a button now -- clicking it opens the full-screen
+          SimplifySentenceFocus view (see useTapWord.ts's
+          openSimplifyFocus), which ReadingScreen.tsx renders in place of
+          this whole component, loading state and all. No onClick=
+          {onAdvance} here (unlike the card above): clicks in this panel
+          are about simplifying, not the word-info stage cycle, so
+          there's nothing for the button to stopPropagation against. */}
       <div
         ref={simplifyRef}
         className="simplify-popover"
@@ -344,37 +334,25 @@ export function WordInfoPopover({
           visibility: simplifyStyle ? "visible" : "hidden",
         }}
       >
-        {!simplifiedSentence && (
-          <button
-            type="button"
-            className="simplify-popover__btn"
-            disabled={isSimplifying}
-            onClick={onSimplifySentence}
-          >
-            {isSimplifying ? "Simplifying…" : "🪄 Simplify sentence"}
-          </button>
-        )}
-        {simplifyError && !isSimplifying && <span className="word-info-popover__error">{simplifyError}</span>}
-        {simplifiedSentence && !simplifiedSentence.needs_simplification && (
-          <span className="word-info-popover__muted">No simplified sentence available.</span>
-        )}
-        {simplifiedSentence && simplifiedSentence.needs_simplification && (
-          <>
-            {/* Surrounding context, so the simplified wording isn't
-                judged in isolation -- see this component's prop doc
-                comment for prevSentenceText/nextSentenceText. */}
-            {prevSentenceText && <div className="simplify-popover__context">{prevSentenceText}</div>}
-            {/* Whole original directly above the whole simplified
-                rewrite -- one coherent sentence each, not a chunk-by-
-                chunk breakdown (see word_info.py's simplify_sentence
-                docstring for why that changed). */}
-            <div className="simplify-popover__compare">
-              <div className="simplify-popover__compare-original">{activeWord.sentenceText}</div>
-              <div className="simplify-popover__compare-simplified">{simplifiedSentence.simplified}</div>
-            </div>
-            {nextSentenceText && <div className="simplify-popover__context">{nextSentenceText}</div>}
-          </>
-        )}
+        <button
+          type="button"
+          className="simplify-popover__btn"
+          // Suppress the browser's default "focus this element on click"
+          // behavior -- without this, clicking this button (a real DOM
+          // focus target) moves keyboard focus onto it, and the instant
+          // it's removed (this whole panel unmounts when
+          // SimplifySentenceFocus takes over), focus is stranded on
+          // <body> until something explicitly reclaims it. Reading
+          // position and Space/ArrowRight handling depend on the reading
+          // pane genuinely holding DOM focus (see ReadingPane.tsx's own
+          // onKeyDown comment) -- keeping focus there in the first place,
+          // rather than only recovering it after the fact, is what closes
+          // that gap for good regardless of mount/effect timing.
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={onOpenSimplifyFocus}
+        >
+          🪄 Simplify sentence
+        </button>
       </div>
     </>
   );
@@ -418,6 +396,10 @@ function StageContent({
         <button
           type="button"
           className="word-info-popover__replay-btn"
+          // See the "Simplify sentence" button's own comment above -- same
+          // reasoning, keeps the reading pane from ever losing DOM focus
+          // to this button in the first place.
+          onMouseDown={(e) => e.preventDefault()}
           onClick={(e) => {
             // Stop this from also bubbling up to the box's own
             // onClick={onAdvance} -- replaying audio shouldn't ALSO

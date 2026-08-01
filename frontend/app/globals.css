@@ -364,6 +364,227 @@ body {
   padding-top: 4px;
 }
 
+/* Full-screen "Simplify sentence" focus view (SimplifySentenceFocus.tsx) --
+   replaces .word-info-popover/.simplify-popover the instant it opens
+   (ReadingScreen.tsx renders one or the other, never both). Recenters on
+   just the current sentence plus two sentences of context each side and
+   opens up real space, rather than cramming a comparison into a 360px
+   card -- fixed to the viewport (not the passage) for the same reason
+   .breath-overlay is: a passage can be taller than the viewport, so a
+   container-relative overlay could land off-screen or mid-scroll. z-index
+   above .jump-here-btn (15) and the two popovers above (10) since this
+   view fully takes over reading interaction while open. */
+.simplify-focus {
+  position: fixed;
+  inset: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  cursor: pointer;
+  padding: 20px 44px 12px;
+  box-sizing: border-box;
+}
+.simplify-focus__close {
+  position: absolute;
+  top: 16px;
+  right: 20px;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  border: 1px solid var(--control-border);
+  background: #fff;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.simplify-focus__close:hover {
+  background: var(--tier-paragraph);
+  color: var(--ink);
+}
+
+/* Wraps the before/main/after rows as ONE centered block, separate from
+   the close button (position: absolute, unaffected) and the hint line
+   below (plain flow, outside this stack). A single `gap` here is what
+   makes the spacing between context and the sentence pair match the
+   spacing WITHIN the sentence pair exactly -- same 10px value as
+   .simplify-focus__row--main's own gap below, rather than three
+   independently-sized viewport thirds with their own ad hoc padding.
+   Rows with nothing in them are skipped in the JSX entirely (see
+   SimplifySentenceFocus.tsx) rather than rendered empty, so gap doesn't
+   insert a phantom space next to an absent side. */
+.simplify-focus__stack {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 10px;
+}
+.simplify-focus__row {
+  display: flex;
+  align-items: center;
+  min-height: 0;
+}
+/* Stacked paragraph blocks (see ParagraphContextBlock in lib/types.ts),
+   not the old fixed-count single-line slots -- "at least 2 sentences" can
+   mean a whole neighboring paragraph gets pulled in, so this scrolls
+   internally (capped well under the viewport) rather than growing
+   without bound and pushing the recentered sentence off-center. */
+.simplify-focus__row--context {
+  flex-direction: column;
+  gap: 10px;
+  max-height: 32vh;
+  overflow-y: auto;
+}
+/* Bottom/top-aligned within their own row so a scrolled (overflowing)
+   block's NEAREST edge to the sentence pair is what touches the shared
+   10px gap, same as a short block would -- keeps the spacing consistent
+   whether context is one short sentence or a whole extra paragraph. */
+.simplify-focus__row--before {
+  justify-content: flex-end;
+}
+.simplify-focus__row--after {
+  justify-content: flex-start;
+}
+/* Two-column comparison layout, per product direction ("original left
+   half, simplified right half, split into lines, so students compare
+   left to right") -- replaces the earlier vertical SA1/SB1/SA2/SB2
+   interleaved stack. Explicit gridColumn/gridRow placement is set inline
+   per line in SimplifySentenceFocus.tsx (original always column 1,
+   simplified always column 2, row = that segment's own index + 1) rather
+   than relying on DOM-order auto-flow, since the two sentences can have
+   different segment counts and auto-flow would misalign the columns the
+   moment one side is missing a middle segment. align-items: center keeps
+   a short segment vertically centered within its row rather than glued
+   to the top when the OTHER column's same-row segment happens to be
+   taller (wrapped context aside, single-line segments are usually the
+   same height, but this is a cheap safety net). position: relative here
+   is only so the ::before divider below can anchor to this box. */
+.simplify-focus__row--main {
+  position: relative;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 28px;
+  row-gap: 10px;
+  align-items: center;
+  width: 100%;
+  max-width: 1100px;
+  margin: 0 auto;
+}
+/* A thin vertical rule between the two columns -- drawn as a standalone
+   absolutely-positioned line rather than a border/padding on the
+   measured .simplify-focus__line elements themselves, so it can't throw
+   off useSharedScale's clientWidth-vs-scrollWidth measurement (a border
+   or padding on the measured element would make clientWidth overstate
+   the width actually available to its content). */
+.simplify-focus__row--main::before {
+  content: "";
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  left: 50%;
+  width: 1px;
+  background: var(--control-border);
+}
+
+/* One paragraph of context text -- formatted like the real reading pane
+   renders a paragraph (left-aligned, wrapping prose, comfortable line
+   length) rather than the old centered single-line italic slot, per
+   product direction: context should look like the original paragraph,
+   not a clipped snippet. Sized close to the main reading pane's own body
+   text (not the smaller/italic backdrop treatment this started as) --
+   still --muted rather than --ink so it's clearly distinguishable from
+   the sentence actively being read, but legible as real passage text in
+   its own right, not a caption. */
+.simplify-focus__context-paragraph {
+  max-width: 720px;
+  margin: 0 auto;
+  text-align: left;
+  font-size: 19px;
+  line-height: 1.6;
+  color: var(--muted);
+}
+
+.simplify-focus__status {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+.simplify-focus__note {
+  color: var(--muted);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* One SEGMENT of one sentence (SA1/SB1/SA2/SB2/... -- see
+   SimplifySentenceFocus.tsx's splitIntoParts/interleaveSegments), placed
+   into its column/row via inline gridColumn/gridRow (set by the caller,
+   see .simplify-focus__row--main above) and forced onto a single line --
+   see useSharedScale, which measures each segment's natural (unscaled)
+   width and shrinks .simplify-focus__line-inner with transform: scale()
+   by ONE shared factor across every segment of the SAME sentence (not
+   independently per line), so e.g. a short final SA segment renders at
+   the same size as an earlier, more cramped SA segment rather than
+   ballooning up to its own natural size. overflow: hidden is a safety
+   net for the very first paint, before the scale has been computed. Both
+   original (SA) and simplified (SB) segments are always full --ink
+   weight/color and bold now -- product direction dropped the previous
+   muted-when-not-currently-being-read convention (the per-word/syllable
+   highlight below is the only "current position" indicator now, same
+   tinted-background mechanic the main reading pane itself uses).
+   --simplified is additionally italic, the one remaining visual cue that
+   distinguishes a rewrite from the original wording at a glance. */
+.simplify-focus__line {
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  justify-content: center;
+}
+.simplify-focus__line-inner {
+  display: inline-block;
+  white-space: nowrap;
+  transform-origin: center center;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--ink);
+}
+.simplify-focus__line--simplified .simplify-focus__line-inner {
+  font-style: italic;
+}
+/* Sentence-mode's own "where am I" indicator -- word/syllable mode
+   already has the per-word/syllable tint (see .reading-word--current),
+   but sentence mode carries neither of those, so without this the
+   current SA/SB segment would be indistinguishable from the rest now
+   that text color no longer marks it either. Same --tier-word background
+   ReadingPane.tsx uses for its own sentence-mode tint, just applied to a
+   whole segment line here (see SimplifySentenceFocus.tsx's tintCurrent).
+   Paragraph mode intentionally gets no indicator, same as the main pane. */
+.simplify-focus__line--current .simplify-focus__line-inner {
+  background: var(--tier-word);
+  border-radius: 6px;
+  padding: 2px 10px;
+}
+
+.simplify-focus__hint {
+  text-align: center;
+  font-size: 12px;
+  color: var(--muted);
+  margin: 8px 0 0;
+}
+.simplify-focus__hint kbd {
+  background: var(--control-bg);
+  border: 1px solid var(--control-border);
+  border-radius: 4px;
+  padding: 1px 5px;
+  font-size: 11px;
+}
+
 /* LibraryPicker.tsx -- the primary content-loading control, styled like
    the existing .control-group chrome (light bordered pill) so it reads
    as part of the same control-surface language as the settings bar

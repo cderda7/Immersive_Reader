@@ -4,13 +4,14 @@ import { useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
 import { useReadingState, type AdvanceMode } from "@/lib/useReadingState";
 import { useTapWord } from "@/lib/useTapWord";
-import { neighboringSentenceText } from "@/lib/types";
+import { sentenceSyllables, sentenceFocusContext } from "@/lib/types";
 import { ReadingPane } from "./ReadingPane";
 import { ControlBar } from "./ControlBar";
 import { LibraryPicker } from "./LibraryPicker";
 import { PassageLoader } from "./PassageLoader";
 import { BreathBanner } from "./BreathBanner";
 import { WordInfoPopover } from "./WordInfoPopover";
+import { SimplifySentenceFocus } from "./SimplifySentenceFocus";
 
 // Singular noun for the hint line's "advance one ___ at a time" --
 // mirrors ControlBar.tsx's ADVANCE_MODES labels, just lowercase/singular
@@ -112,7 +113,7 @@ export function ReadingScreen() {
           heldKeysRef={heldKeysRef}
         />
         <BreathBanner active={state.isBreathError} />
-        {tapWord.activeWord && (
+        {tapWord.activeWord && !tapWord.isSimplifyFocusOpen && (
           <WordInfoPopover
             activeWord={tapWord.activeWord}
             stage={tapWord.stage}
@@ -124,23 +125,33 @@ export function ReadingScreen() {
             onAdvance={tapWord.advanceStage}
             onRetreat={tapWord.retreatStage}
             onReplayAudio={tapWord.replayAudio}
+            onOpenSimplifyFocus={tapWord.openSimplifyFocus}
+            heldKeysRef={heldKeysRef}
+          />
+        )}
+        {tapWord.activeWord && tapWord.isSimplifyFocusOpen && (
+          <SimplifySentenceFocus
+            originalSyllables={sentenceSyllables(
+              state.syllables,
+              tapWord.activeWord.paragraphIdx,
+              tapWord.activeWord.sentenceIdx
+            )}
             simplifiedSentence={tapWord.simplifiedSentence}
             isSimplifying={tapWord.isSimplifying}
             simplifyError={tapWord.simplifyError}
-            onSimplifySentence={tapWord.simplifySentence}
-            prevSentenceText={neighboringSentenceText(
+            onRetrySimplify={tapWord.simplifySentence}
+            advanceMode={state.advanceMode}
+            context={sentenceFocusContext(
               state.syllables,
               tapWord.activeWord.paragraphIdx,
-              tapWord.activeWord.sentenceIdx,
-              "before"
+              tapWord.activeWord.sentenceIdx
             )}
-            nextSentenceText={neighboringSentenceText(
-              state.syllables,
-              tapWord.activeWord.paragraphIdx,
-              tapWord.activeWord.sentenceIdx,
-              "after"
-            )}
-            heldKeysRef={heldKeysRef}
+            onClose={tapWord.closeSimplifyFocus}
+            onExitContinue={() => {
+              if (!tapWord.activeWord) return;
+              state.jumpPastSentence(tapWord.activeWord.paragraphIdx, tapWord.activeWord.sentenceIdx);
+              tapWord.closeSimplifyFocus();
+            }}
           />
         )}
       </div>
