@@ -246,16 +246,20 @@ body {
   background: #c1650a;
 }
 
-/* Tap-word card (WordInfoPopover.tsx). position: fixed is set inline
-   (viewport coordinates, computed from DOM rects) -- this just carries
-   the chrome. z-index above .breath-overlay (5) since both can only
-   plausibly be visible one at a time in practice, but the card should
-   win if they ever did overlap. */
+/* Tap-word card (WordInfoPopover.tsx) -- word-level pronunciation/
+   definition/morphology/hear-aloud/example, positioned ABOVE the tapped
+   word. Its sentence-level sibling, .simplify-popover below, is a
+   separate floating panel BELOW the word instead of a section of this
+   same card -- see that class's own comment. position: fixed is set
+   inline (viewport coordinates, computed from DOM rects) -- this just
+   carries the chrome. z-index above .breath-overlay (5) since both can
+   only plausibly be visible one at a time in practice, but the card
+   should win if they ever did overlap. */
 .word-info-popover {
   z-index: 10;
-  /* Wider than the original 280px -- the sentence-simplify comparison
-     grid needs real room to lay out chunk columns without wrapping every
-     single one onto its own line. */
+  /* Wider than the original 280px -- the original/simplified sentence
+     comparison in .simplify-popover shares this same width, and needs
+     real room to lay out a whole sentence without wrapping awkwardly. */
   width: 360px;
   max-width: calc(100vw - 24px);
   background: var(--paper);
@@ -316,15 +320,25 @@ body {
 .word-info-popover__replay-btn:hover {
   opacity: 0.9;
 }
-.word-info-popover__simplify {
+/* Simplify-sentence panel (WordInfoPopover.tsx) -- its own floating box
+   below the tapped word/sentence, separate from .word-info-popover above
+   it. Same card chrome (z-index/width/background/border/shadow/padding)
+   so the two visually read as a matched pair on opposite sides of the
+   reading position, not as a main popover plus some lesser attachment. */
+.simplify-popover {
+  z-index: 10;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  margin-top: 10px;
-  padding-top: 10px;
-  border-top: 1px solid #e6e2d8;
+  width: 360px;
+  max-width: calc(100vw - 24px);
+  background: var(--paper);
+  border: 1px solid var(--control-border);
+  border-radius: 10px;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
+  padding: 12px 14px;
 }
-.word-info-popover__simplify-btn {
+.simplify-popover__btn {
   align-self: flex-start;
   background: var(--tier-syllable);
   color: var(--ink);
@@ -335,16 +349,16 @@ body {
   font-weight: 600;
   cursor: pointer;
 }
-.word-info-popover__simplify-btn:hover {
+.simplify-popover__btn:hover {
   opacity: 0.9;
 }
-.word-info-popover__simplify-btn:disabled {
+.simplify-popover__btn:disabled {
   opacity: 0.6;
   cursor: default;
 }
 /* Surrounding sentence-before/sentence-after context -- muted and small
    so it clearly reads as backdrop, not the thing being compared. */
-.word-info-popover__context {
+.simplify-popover__context {
   font-size: 12px;
   font-style: italic;
   color: var(--muted);
@@ -353,7 +367,7 @@ body {
    directly above the other, close together, so proximity still does the
    work of showing the correspondence even without a chunk-by-chunk
    breakdown -- see word_info.py's simplify_sentence docstring. */
-.word-info-popover__compare {
+.simplify-popover__compare {
   display: flex;
   flex-direction: column;
   gap: 4px;
@@ -361,11 +375,11 @@ body {
   border-radius: 8px;
   padding: 10px;
 }
-.word-info-popover__compare-original {
+.simplify-popover__compare-original {
   font-size: 13px;
   color: var(--ink);
 }
-.word-info-popover__compare-simplified {
+.simplify-popover__compare-simplified {
   font-size: 13px;
   font-weight: 600;
   color: #8a5a00;
