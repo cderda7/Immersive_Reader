@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useSearchParams } from "next/navigation";
-import { useReadingState, type AdvanceMode } from "@/lib/useReadingState";
+import { useReadingState, bookTitleFromSlug, type AdvanceMode } from "@/lib/useReadingState";
 import { useTapWord } from "@/lib/useTapWord";
 import { sentenceSyllables, sentenceFocusContext } from "@/lib/types";
 import { ReadingPane } from "./ReadingPane";
@@ -92,7 +92,7 @@ export function ReadingScreen() {
   return (
     <div className="app-frame">
       <header className="app-header">
-        <h1>Immerse — passage view</h1>
+        <h1>Immerse</h1>
       </header>
 
       <LibraryPicker
@@ -100,6 +100,14 @@ export function ReadingScreen() {
         isLoading={state.isLoading}
         loadError={state.loadError}
       />
+
+      {/* Book title -- stable across the whole book, unlike the
+          "CHAPTER 1. Loomings." line right below it (that's just the
+          passage's own first paragraph text, so it only looks like a
+          heading while reading position happens to still be on it).
+          null (custom pasted text, or nothing loaded yet) renders
+          nothing here rather than an empty bar. */}
+      {state.bookSlug && <div className="book-title">{bookTitleFromSlug(state.bookSlug)}</div>}
 
       <div className="reading-pane-wrap">
         <ReadingPane

@@ -63,6 +63,21 @@ body {
   text-transform: uppercase;
 }
 
+/* Book title, above the passage -- see ReadingScreen.tsx's comment on why
+   this exists as its own stable element rather than relying on the
+   passage's own "CHAPTER 1. Loomings." first paragraph. Styling mirrors
+   .app-header h1 (small caps, muted) since both are the same kind of
+   label, just one level more specific. */
+.book-title {
+  padding: 0 28px;
+  margin-top: 20px;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  text-transform: uppercase;
+}
+
 .reading-pane-wrap {
   position: relative;
 }

@@ -149,9 +149,24 @@ function findPreviousIndex(syllables: Syllable[], currentIndex: number, mode: Ad
   return 0;
 }
 
+// "moby-dick" -> "MOBY DICK", "romeo-and-juliet" -> "ROMEO AND JULIET" --
+// works for any book slug without needing a separate manifest fetch just
+// for display, since every library slug is already exactly this shape
+// (see frontend/public/library/*/manifest.json's own "slug" field, which
+// this mirrors). Book title shown above the passage (ReadingScreen.tsx),
+// same for every chapter of a given book.
+export function bookTitleFromSlug(slug: string): string {
+  return slug.split("-").join(" ").toUpperCase();
+}
+
 export function useReadingState() {
   const [syllables, setSyllables] = useState<Syllable[]>(SAMPLE_SYLLABLES);
   const [currentIndex, setCurrentIndex] = useState(0);
+  // Which curated-library book is currently loaded, if any -- set by
+  // loadChapter below, cleared by loadPassage (a pasted custom passage
+  // isn't part of any book, so no title should show for it). null covers
+  // both "nothing loaded yet" and "custom passage" the same way.
+  const [bookSlug, setBookSlug] = useState<string | null>(null);
 
   const [pauseKind, setPauseKindState] = useState<PauseKind>(null);
   const pauseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -424,6 +439,7 @@ export function useReadingState() {
       cancelPause();
       setSyllables(data.syllables as Syllable[]);
       setCurrentIndex(0);
+      setBookSlug(null); // pasted text isn't part of any library book
     } catch (err) {
       setLoadError(
         err instanceof Error
@@ -455,6 +471,7 @@ export function useReadingState() {
       cancelPause();
       setSyllables(data as Syllable[]);
       setCurrentIndex(0);
+      setBookSlug(bookSlug);
     } catch (err) {
       setLoadError(
         err instanceof Error ? `Couldn't load that chapter (${err.message}).` : "Couldn't load that chapter."
@@ -487,5 +504,6 @@ export function useReadingState() {
     loadChapter,
     loadError,
     isLoading,
+    bookSlug,
   };
 }
