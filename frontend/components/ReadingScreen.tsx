@@ -112,6 +112,8 @@ export function ReadingScreen() {
           onJumpToWord={state.jumpToWord}
           onWordTap={tapWord.tapWord}
           onOpenSimplify={tapWord.openSimplifyFocusForWord}
+          noSimplificationWordKey={tapWord.noSimplificationWordKey}
+          onClearNoSimplificationMessage={tapWord.clearNoSimplificationMessage}
           tapWordOpen={tapWord.isOpen}
           onSpace={state.advance}
           onRetreat={state.retreat}

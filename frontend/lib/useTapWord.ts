@@ -145,6 +145,15 @@ export function useTapWord(gradeLevel: number = 9) {
   const [simplifyError, setSimplifyError] = useState<string | null>(null);
   const simplifyCacheRef = useRef<Map<string, SimplifiedSentence>>(new Map());
 
+  // Which word's hover-triggered "SIMPLIFY SENTENCE" chip (ReadingPane.tsx)
+  // most recently resolved to "nothing to show" -- keyed the same way as
+  // that component's own wordKey (`${paragraphIdx}-${wordIdx}`). Lets
+  // ReadingPane swap its JUMP HERE/SIMPLIFY SENTENCE row for a "no
+  // simplified sentence available" message in that exact spot (see
+  // openSimplifyFocusForWord below) instead of the click just silently
+  // doing nothing. null means no such message is currently showing.
+  const [noSimplificationWordKey, setNoSimplificationWordKey] = useState<string | null>(null);
+
   // Whether the full-screen simplify-sentence FOCUS view is showing
   // (SimplifySentenceFocus.tsx) -- separate from simplifiedSentence
   // itself being populated, since opening focus mode and fetching the
@@ -602,6 +611,7 @@ export function useTapWord(gradeLevel: number = 9) {
     (paragraphIdx: number, wordIdx: number, sentenceIdx: number, wordText: string, sentenceText: string) => {
       requestIdRef.current += 1;
       const requestId = requestIdRef.current;
+      const wordKey = `${paragraphIdx}-${wordIdx}`;
       setStageIndex(0);
       setWordInfo(null);
       setIsLoading(false);
@@ -611,13 +621,22 @@ export function useTapWord(gradeLevel: number = 9) {
       setSimplifiedSentence(null);
       setSimplifyError(null);
       setIsSimplifying(false);
+      // Fresh attempt -- clear any leftover "no simplified sentence
+      // available" message from a PREVIOUS word before this one resolves,
+      // same as clearing the other simplify-related state above.
+      setNoSimplificationWordKey(null);
       runSimplify(sentenceText, (data) => {
         if (requestIdRef.current !== requestId) return; // student moved on already
         if (hasUsableSimplification(data)) {
           setActiveWord({ paragraphIdx, wordIdx, sentenceIdx, word: wordText, sentenceText });
           setIsSimplifyFocusOpen(true);
+        } else {
+          // Never leaves the reading pane -- no card, no focus view.
+          // ReadingPane.tsx shows a "no simplified sentence available"
+          // message in this word's own action row instead (see
+          // noSimplificationWordKey above).
+          setNoSimplificationWordKey(wordKey);
         }
-        // else: never leaves the reading pane -- no card, no focus view.
       });
     },
     [runSimplify]
@@ -637,6 +656,15 @@ export function useTapWord(gradeLevel: number = 9) {
     setIsSimplifyFocusOpen(false);
     closeWord();
   }, [closeWord]);
+
+  // Dismisses the "no simplified sentence available" message (see
+  // noSimplificationWordKey above) -- ReadingPane.tsx calls this when the
+  // pointer leaves the word it's anchored to, same "gone once you stop
+  // looking at it" lifetime as the ordinary JUMP HERE/SIMPLIFY SENTENCE
+  // row it temporarily replaces.
+  const clearNoSimplificationMessage = useCallback(() => {
+    setNoSimplificationWordKey(null);
+  }, []);
 
   return {
     activeWord,
@@ -662,5 +690,7 @@ export function useTapWord(gradeLevel: number = 9) {
     openSimplifyFocus,
     openSimplifyFocusForWord,
     closeSimplifyFocus,
+    noSimplificationWordKey,
+    clearNoSimplificationMessage,
   };
 }

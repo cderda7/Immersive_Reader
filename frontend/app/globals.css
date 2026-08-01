@@ -216,7 +216,8 @@ body {
   gap: 6px;
 }
 .jump-here-btn,
-.simplify-sentence-btn {
+.simplify-sentence-btn,
+.simplify-unavailable-msg {
   border: none;
   border-radius: 6px;
   padding: 3px 8px;
@@ -244,6 +245,16 @@ body {
 }
 .simplify-sentence-btn:hover {
   opacity: 0.85;
+}
+/* Replaces the JUMP HERE/SIMPLIFY SENTENCE pair in .word-actions, same
+   row/alignment, once a SIMPLIFY SENTENCE click resolves as "nothing to
+   show" (see ReadingPane.tsx's noSimplificationWordKey / useTapWord.ts's
+   openSimplifyFocusForWord) -- not a button, just a message, so no
+   :hover/cursor treatment of its own despite sharing the base rule above. */
+.simplify-unavailable-msg {
+  background: #000;
+  color: #fff;
+  cursor: default;
 }
 
 /* Tap-word card (WordInfoPopover.tsx) -- word-level pronunciation/
