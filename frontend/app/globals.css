@@ -53,9 +53,6 @@ body {
 .app-header {
   padding: 16px 28px;
   border-bottom: 1px solid #e6e2d8;
-  display: flex;
-  justify-content: space-between;
-  align-items: baseline;
 }
 .app-header h1 {
   font-size: 15px;
@@ -65,26 +62,6 @@ body {
   font-weight: 600;
   text-transform: uppercase;
 }
-.legend {
-  font-size: 12px;
-  color: var(--muted);
-  display: flex;
-  gap: 14px;
-}
-.legend-item {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.swatch {
-  width: 12px;
-  height: 12px;
-  border-radius: 3px;
-  display: inline-block;
-}
-.swatch--paragraph { background: var(--tier-paragraph); }
-.swatch--word { background: var(--tier-word); }
-.swatch--syllable { background: var(--tier-syllable); }
 
 .reading-pane-wrap {
   position: relative;

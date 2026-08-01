@@ -88,11 +88,6 @@ export function ReadingScreen() {
     <div className="app-frame">
       <header className="app-header">
         <h1>Immerse — passage view</h1>
-        <div className="legend">
-          <LegendItem swatchClass="swatch--paragraph" label="paragraph" />
-          <LegendItem swatchClass="swatch--word" label="word" />
-          <LegendItem swatchClass="swatch--syllable" label="syllable" />
-        </div>
       </header>
 
       <LibraryPicker
@@ -180,14 +175,5 @@ export function ReadingScreen() {
         )}
       </p>
     </div>
-  );
-}
-
-function LegendItem({ swatchClass, label }: { swatchClass: string; label: string }) {
-  return (
-    <span className="legend-item">
-      <span className={`swatch ${swatchClass}`} />
-      {label}
-    </span>
   );
 }
