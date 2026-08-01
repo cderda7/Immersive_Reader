@@ -12,8 +12,18 @@ interface WordInfoPopoverProps {
   error: string | null;
   // Failure of just the background example-sentence fetch -- separate
   // from `error` above since it doesn't block stages 1-4 (see
-  // useTapWord.ts). Only StageContent's "example" case reads this.
+  // useTapWord.ts). Read by both StageContent's "example" case AND its
+  // "definition" case now -- the same background call resolves both
+  // fields (see word_info.py's _generate_enrichment), so a failure there
+  // means neither has a confirmed answer.
   exampleError: string | null;
+  // True once the definition shown would be the CONFIRMED one (see
+  // useTapWord.ts's isDefinitionConfirmed for the full reasoning) rather
+  // than get_word_info_quick's fast, sometimes-wrong word-overlap guess.
+  // StageContent's "definition" case withholds wordInfo.definition
+  // entirely until this flips true, rather than showing the guess and
+  // then swapping it out from under the student.
+  isDefinitionConfirmed: boolean;
   onClose: () => void;
   onAdvance: () => void;
   // ArrowLeft while the card is open -- steps back a stage, or closes the
@@ -23,11 +33,17 @@ interface WordInfoPopoverProps {
   onReplayAudio: () => void;
   // "Simplify sentence" -- opens the full-screen recentered
   // SimplifySentenceFocus view (see useTapWord.ts's openSimplifyFocus)
-  // instead of expanding inline here. ReadingScreen.tsx swaps this
-  // component out for that one the instant it's opened, so this button is
-  // this panel's ENTIRE job now -- no loading/error/comparison state of
-  // its own to track anymore, that all lives in the focus view.
+  // instead of expanding inline here -- but ONLY once a usable rewrite is
+  // actually confirmed (Aug 1 2026: a sentence already at/below grade
+  // level, or a fetch failure, should never pull the student off this
+  // card). isSimplifying below is what lets this panel show its own
+  // brief pending state for that in-between moment, since it's no longer
+  // true that clicking this button always immediately swaps the view.
   onOpenSimplifyFocus: () => void;
+  // True while openSimplifyFocus's fetch is in flight -- see its comment
+  // in useTapWord.ts. This card stays mounted during that window (unlike
+  // before), so it needs its own small "something's happening" signal.
+  isSimplifying: boolean;
   // Shared with ReadingPane -- see ReadingScreen's comment where this is
   // created. NOT a local Set here on purpose: a fresh, empty Set at
   // mount time would have no way to know Space/ArrowRight was already
@@ -62,11 +78,13 @@ export function WordInfoPopover({
   isLoading,
   error,
   exampleError,
+  isDefinitionConfirmed,
   onClose,
   onAdvance,
   onRetreat,
   onReplayAudio,
   onOpenSimplifyFocus,
+  isSimplifying,
   heldKeysRef,
 }: WordInfoPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
@@ -304,7 +322,13 @@ export function WordInfoPopover({
             </span>
           )}
           {wordInfo && !isLoading && !error && (
-            <StageContent stage={stage} wordInfo={wordInfo} exampleError={exampleError} onReplayAudio={onReplayAudio} />
+            <StageContent
+              stage={stage}
+              wordInfo={wordInfo}
+              exampleError={exampleError}
+              isDefinitionConfirmed={isDefinitionConfirmed}
+              onReplayAudio={onReplayAudio}
+            />
           )}
         </div>
       </div>
@@ -337,6 +361,7 @@ export function WordInfoPopover({
         <button
           type="button"
           className="simplify-popover__btn"
+          disabled={isSimplifying}
           // Suppress the browser's default "focus this element on click"
           // behavior -- without this, clicking this button (a real DOM
           // focus target) moves keyboard focus onto it, and the instant
@@ -351,7 +376,7 @@ export function WordInfoPopover({
           onMouseDown={(e) => e.preventDefault()}
           onClick={onOpenSimplifyFocus}
         >
-          🪄 Simplify sentence
+          {isSimplifying ? "🪄 Checking…" : "🪄 Simplify sentence"}
         </button>
       </div>
     </>
@@ -367,11 +392,13 @@ function StageContent({
   stage,
   wordInfo,
   exampleError,
+  isDefinitionConfirmed,
   onReplayAudio,
 }: {
   stage: TapWordStage;
   wordInfo: WordInfo;
   exampleError: string | null;
+  isDefinitionConfirmed: boolean;
   onReplayAudio: () => void;
 }) {
   switch (stage) {
@@ -383,7 +410,28 @@ function StageContent({
         </>
       );
     case "definition":
-      return <div>{wordInfo.definition}</div>;
+      // Withheld until isDefinitionConfirmed -- see that prop's own doc
+      // comment above (and useTapWord.ts's) for the full reasoning: the
+      // FAST word-overlap guess that would otherwise show here first is
+      // wrong often enough, for genuinely ambiguous/multi-sense words,
+      // that showing it and then silently swapping it for the CONFIRMED
+      // one a beat later reads as a glitch, not a refinement. Same
+      // "empty means still resolving, not a real answer" pattern the
+      // "example" case below already uses for example_sentence, just
+      // gated by an explicit flag here since the fast guess is rarely
+      // actually an empty string the way example_sentence legitimately
+      // starts as one.
+      if (isDefinitionConfirmed) {
+        return <div>{wordInfo.definition}</div>;
+      }
+      if (exampleError) {
+        return (
+          <span className="word-info-popover__error">
+            {exampleError} Tap to try again.
+          </span>
+        );
+      }
+      return <span className="word-info-popover__muted">Figuring out the best definition…</span>;
     case "morphology":
       return wordInfo.morphology ? (
         <>

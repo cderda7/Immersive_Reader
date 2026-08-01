@@ -1124,9 +1124,8 @@ def _assess_and_simplify_tool(grade_level: int) -> dict:
                     "description": (
                         "The WHOLE sentence rewritten in simpler language a grade "
                         f"{grade_level} student would find easy to read, keeping the same "
-                        "meaning and not inventing new details. Always required (non-empty) "
-                        "-- every sentence gets a rewrite now, even an already-simple one "
-                        "(TEMPORARY: see simplify_sentence()'s docstring)."
+                        "meaning and not inventing new details. Required (non-empty) when "
+                        "needs_simplification is true; leave as an empty string when false."
                     ),
                 },
             },
@@ -1136,26 +1135,28 @@ def _assess_and_simplify_tool(grade_level: int) -> dict:
 
 
 def simplify_sentence(sentence: str, grade_level: int) -> dict:
-    """Rewrites the WHOLE sentence (not word-by-word or chunk-by-chunk --
-    a single coherent rewrite) to `grade_level` via one Claude tool-use
-    call.
-
-    TEMPORARY (per Carson, Aug 1 2026): this used to assess-first --
-    judge whether the sentence already read at grade level, and only pay
-    for a rewrite if not. That judgment turned out to flip-flop between
-    calls on borderline sentences even after pinning temperature=0, and
-    while chasing that down, the product call was made to just always
-    offer a rewrite for now rather than keep debugging the judgment.
-    needs_simplification is therefore hardcoded true below regardless of
-    what the model reports -- see the prompt/tool-schema comments just
-    above for the same note. The old assess-then-simplify version is
-    still in git history if/when it's worth re-enabling.
+    """Assesses whether `sentence` already reads as plain, literal language
+    at grade level, and if not, rewrites the WHOLE sentence (not
+    word-by-word or chunk-by-chunk -- a single coherent rewrite) to
+    `grade_level` via one Claude tool-use call. Deliberately does the
+    assessment and the rewrite together in one round trip rather than two
+    separate calls -- functionally the same "judge first, then simplify
+    only if needed" behavior, just without paying for a second Anthropic
+    call to get it. (Briefly replaced, Aug 1 2026, with an always-rewrite
+    version while debugging an unrelated deploy issue -- reverted back to
+    assess-first now that a real gate is wanted again: sentences already
+    at/below grade_level should NOT get a simplified_sentence. temperature
+    is still pinned to 0 below, which is what actually fixed the
+    flip-flopping judgment that prompted the detour in the first place --
+    that was never a reason to drop the gate itself.)
 
     Returns {"needs_simplification": bool, "simplified": str,
-    "simplified_syllables": list[dict]}. needs_simplification is always
-    true right now (see above); `simplified` is only ever "" if the model
-    call itself came back malformed. `simplified_syllables` is the same
-    flat syllable-dict shape syllabify.py's syllabify() returns for a
+    "simplified_syllables": list[dict]}. `simplified` is "" whenever
+    needs_simplification is false, which the frontend (see
+    SimplifySentenceFocus.tsx / useTapWord.ts) treats as "nothing to show
+    -- don't leave the current view for this," not as an error.
+    `simplified_syllables` is the same flat syllable-dict shape
+    syllabify.py's syllabify() returns for a
     whole passage -- run here on just the simplified sentence (a
     "passage" of one paragraph, one sentence) -- so the focus reading
     view (SimplifySentenceFocus.tsx) can advance through the simplified
@@ -1214,18 +1215,12 @@ def simplify_sentence(sentence: str, grade_level: int) -> dict:
     # must survive unchanged.
     prompt = (
         f'Sentence: "{sentence}"\n\n'
-        # TEMPORARY, per Carson (Aug 1 2026): the assess-first judgment
-        # below was flip-flopping between calls on borderline sentences
-        # (see the temperature=0 fix above) and, while debugging that,
-        # a request landed to just always offer a rewrite for now rather
-        # than keep chasing the judgment call -- so needs_simplification
-        # is no longer asked for; every sentence gets rewritten. Revert
-        # to the assess-then-simplify prompt (still in git history) once
-        # that's worth re-enabling.
-        f"Rewrite the WHOLE sentence (not just individual words) in simpler language a grade "
-        f"{grade_level} student would find easy to read, keeping the same meaning and not "
-        "inventing new details. Always produce a rewrite, even if the sentence is already "
-        "fairly simple -- at minimum, simplify word choice and sentence flow.\n\n"
+        f"First judge: is this sentence already plain, literal, modern English that would "
+        f"already be easy for a grade {grade_level} reader exactly as written? If yes, "
+        "needs_simplification is false and simplified can be left empty. If no -- it uses "
+        "figurative language, archaic or unusual wording, or an unusually complex structure "
+        "-- set needs_simplification to true and rewrite the WHOLE sentence in simpler "
+        "language, keeping the same meaning.\n\n"
         "STRUCTURE RULE, non-negotiable: before rewriting, go through the ORIGINAL sentence "
         "and find every point where one clause ends and another begins, and note the EXACT "
         "punctuation mark joining them there -- a comma, a semicolon, a colon, a dash, "
@@ -1281,16 +1276,9 @@ def simplify_sentence(sentence: str, grade_level: int) -> dict:
         raise
 
     tool_use = next(b for b in response.content if b.type == "tool_use")
-    # TEMPORARY, per Carson (Aug 1 2026), matching the prompt change above:
-    # needs_simplification is forced true unconditionally instead of
-    # trusting the model's own field (which the old assess-first prompt no
-    # longer even asks it to reason carefully about) -- every sentence now
-    # gets offered a simplified version. `simplified` still falls back to
-    # "" defensively (so a malformed/empty tool call can't crash this),
-    # but the prompt now always asks for a real rewrite.
-    needs_simplification = True
-    simplified = (tool_use.input.get("simplified") or "").strip()
-    simplified_syllables = syllabify(simplified) if simplified else []
+    needs_simplification = bool(tool_use.input.get("needs_simplification"))
+    simplified = (tool_use.input.get("simplified") or "").strip() if needs_simplification else ""
+    simplified_syllables = syllabify(simplified) if needs_simplification and simplified else []
 
     result = {
         "needs_simplification": needs_simplification,

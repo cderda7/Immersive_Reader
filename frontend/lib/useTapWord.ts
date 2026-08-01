@@ -75,17 +75,29 @@ interface WordExampleResponse {
 // Shape POST /api/simplify-sentence returns -- see
 // word_info.py's simplify_sentence. needs_simplification false means the
 // sentence was already judged plain/literal/at-grade-level -- simplified
-// is "" (and simplified_syllables []) in that case, and
-// SimplifySentenceFocus.tsx shows "No simplified sentence available."
-// instead of a comparison. simplified_syllables is the rewritten
-// sentence's own real syllable breaks (same flat shape as the passage's
-// syllables) -- what lets the focus view advance through it
-// syllable-by-syllable with the same machinery as normal reading,
-// instead of a plain string it has no break data for.
+// is "" (and simplified_syllables []) in that case. simplified_syllables
+// is the rewritten sentence's own real syllable breaks (same flat shape
+// as the passage's syllables) -- what lets the focus view advance
+// through it syllable-by-syllable with the same machinery as normal
+// reading, instead of a plain string it has no break data for.
 export interface SimplifiedSentence {
   needs_simplification: boolean;
   simplified: string;
   simplified_syllables: Syllable[];
+}
+
+// Gate used everywhere a caller decides whether it's worth showing the
+// simplified-sentence focus view at all (see openSimplifyFocus/
+// openSimplifyFocusForWord below) -- product direction, Aug 1 2026: a
+// sentence that doesn't get a translation (already at/below grade level,
+// or a malformed/empty model response) should never pull the student out
+// of whatever view they were already on. `data` is null on a fetch
+// error too (see runSimplify's onResolved calls), which this correctly
+// treats as "not usable" -- an error still surfaces via simplifyError
+// for a caller that's already in the focus view (the "Try again" retry
+// path), just never as a reason to OPEN it in the first place.
+function hasUsableSimplification(data: SimplifiedSentence | null): boolean {
+  return !!data?.needs_simplification && data.simplified_syllables.length > 0;
 }
 
 export function useTapWord(gradeLevel: number = 9) {
@@ -99,6 +111,27 @@ export function useTapWord(gradeLevel: number = 9) {
   // the fast fetch succeeding). A failed example fetch shouldn't block
   // any of that -- only StageContent's "example" case reads this one.
   const [exampleError, setExampleError] = useState<string | null>(null);
+
+  // True once the DEFINITION shown is the one the background Claude call
+  // confirmed/corrected (see word_info.py's "Word-sense disambiguation"
+  // docstring section) rather than just get_word_info_quick's fast
+  // word-overlap guess. Both fetches fire together at tap time, but the
+  // fast one almost always resolves first with a real dictionary
+  // definition already in hand -- so without this flag, WordInfoPopover
+  // would show that guess immediately and then have it silently swap out
+  // from under the student's eyes a moment later whenever the slow call
+  // picks a DIFFERENT sense than the guess did (a real, not rare,
+  // occurrence for any multi-sense word). StageContent's "definition"
+  // case withholds the text entirely until this is true, showing a
+  // loading state instead -- same "don't show it until it's real"
+  // pattern example_sentence already uses (that field just starts as ""
+  // to mean the same thing; definition can't use an empty string the
+  // same way since the fast guess is rarely actually empty). Reset to
+  // false by fetchWordInfo below every time a genuinely new word/
+  // sentence pair is looked up, unless the confirmed answer is already
+  // cached; set true the instant fetchExampleOnly's response lands,
+  // since that's the SAME background call that resolves the definition.
+  const [isDefinitionConfirmed, setIsDefinitionConfirmed] = useState(false);
 
   // "Simplify sentence" -- deliberately separate from the
   // pronunciation/definition/morphology/hear-aloud/example stage cycle
@@ -240,9 +273,15 @@ export function useTapWord(gradeLevel: number = 9) {
         exampleCacheRef.current.set(cacheKey(cleanWord, sentence), data);
         // Merge into whatever's already there (from the quick fetch,
         // which can win the race and resolve first) -- data always
-        // carries respelling now, and in the rarer partial/no-dictionary
-        // cases also ipa and/or definition that Claude had to invent.
+        // carries respelling and a definition now (the latter is the
+        // confirmed/corrected word-sense pick, not just Claude's
+        // invention for the rarer no-dictionary case -- see
+        // word_info.py's _generate_enrichment), and in the rarer
+        // partial/no-dictionary case also an ipa Claude had to invent.
         setWordInfo((prev) => (prev ? { ...prev, ...data } : prev));
+        // This IS the confirmation -- see isDefinitionConfirmed's own
+        // comment above.
+        setIsDefinitionConfirmed(true);
       })
       .catch((err) => {
         if (requestIdRef.current !== requestId) return;
@@ -270,6 +309,10 @@ export function useTapWord(gradeLevel: number = 9) {
 
       const cachedQuick = quickCacheRef.current.get(cacheKey(cleanWord, sentence));
       const cachedExample = exampleCacheRef.current.get(cacheKey(cleanWord, sentence));
+      // Already confirmed if this exact (word, sentence) was resolved
+      // before (cache hit) -- otherwise wait for fetchExampleOnly's own
+      // response to flip this, same as a brand-new word does.
+      setIsDefinitionConfirmed(cachedExample !== undefined);
 
       if (cachedQuick) {
         setWordInfo(cachedExample !== undefined ? { ...cachedQuick, ...cachedExample } : cachedQuick);
@@ -324,6 +367,19 @@ export function useTapWord(gradeLevel: number = 9) {
         fetchExampleOnly(cleanWordText(rawWordText), sentenceText);
         return;
       }
+      // Same failure, but caught earlier -- sitting on the DEFINITION
+      // stage with nothing to show because that same background fetch
+      // failed (see isDefinitionConfirmed's comment above: it's the
+      // confirmed definition, not just the invented one, that comes from
+      // this call). Unlike the example stage, definition isn't the last
+      // stage, so without this a tap/space here would just silently
+      // advance past the error into morphology instead of offering a
+      // retry -- a student would have to keep going all the way to
+      // example before getting a chance to fix it.
+      if (wordInfo && stages[stageIndex] === "definition" && !isDefinitionConfirmed && exampleError) {
+        fetchExampleOnly(cleanWordText(rawWordText), sentenceText);
+        return;
+      }
       // Already on the last stage with nothing left to retry -- another
       // tap/space/arrow here means "I'm done with this word," not "sit
       // here forever" (which is what the plain Math.min clamp below
@@ -343,7 +399,18 @@ export function useTapWord(gradeLevel: number = 9) {
         return next;
       });
     },
-    [wordInfo, isLoading, error, exampleError, stages, stageIndex, fetchWordInfo, fetchExampleOnly, closeWord]
+    [
+      wordInfo,
+      isLoading,
+      error,
+      exampleError,
+      isDefinitionConfirmed,
+      stages,
+      stageIndex,
+      fetchWordInfo,
+      fetchExampleOnly,
+      closeWord,
+    ]
   );
 
   const tapWord = useCallback(
@@ -425,13 +492,20 @@ export function useTapWord(gradeLevel: number = 9) {
   // fetchExampleOnly: if the student moves on to a different word before
   // this resolves, the response is stale and should be ignored rather
   // than clobbering whatever's now active.
+  //
+  // onResolved (optional): fires with the resolved SimplifiedSentence, or
+  // null on error/staleness -- lets a caller decide what to do ONLY once
+  // the real answer is known, e.g. openSimplifyFocusForWord below gating
+  // whether to open the focus view at all on hasUsableSimplification(data)
+  // instead of opening it eagerly and finding out after the fact.
   const runSimplify = useCallback(
-    (sentence: string) => {
+    (sentence: string, onResolved?: (data: SimplifiedSentence | null) => void) => {
       const cacheKeyStr = simplifyCacheKey(sentence, gradeLevel);
       const cached = simplifyCacheRef.current.get(cacheKeyStr);
       if (cached !== undefined) {
         setSimplifiedSentence(cached);
         setSimplifyError(null);
+        onResolved?.(cached);
         return;
       }
 
@@ -460,9 +534,11 @@ export function useTapWord(gradeLevel: number = 9) {
           simplifyCacheRef.current.set(cacheKeyStr, data);
           setSimplifiedSentence(data);
           setIsSimplifying(false);
+          onResolved?.(data);
         })
         .catch((err) => {
           if (requestIdRef.current !== requestId) return;
+          onResolved?.(null);
           setSimplifyError(
             err.name === "AbortError"
               ? "Simplifying this sentence is taking too long."
@@ -486,46 +562,63 @@ export function useTapWord(gradeLevel: number = 9) {
     runSimplify(activeWord.sentenceText);
   }, [activeWord, runSimplify]);
 
-  // Entry point for the "🪄 Simplify sentence" button (WordInfoPopover.tsx)
-  // -- opens the full-screen recentered focus view immediately AND kicks
-  // off the fetch (or reuses the cache) at the same time, rather than
-  // waiting for simplifiedSentence to arrive first. The view itself shows
-  // its own loading state in the meantime (see SimplifySentenceFocus.tsx)
-  // -- recentering doesn't need to wait on the network.
+  // Entry point for the "🪄 Simplify sentence" button (WordInfoPopover.tsx).
+  // Product direction, Aug 1 2026: a sentence that doesn't need/get a
+  // translation should never pull the student out of the tap-to-define
+  // card they're already looking at -- so this WAITS on the fetch (or
+  // cache hit) and only flips to the full-screen focus view once
+  // hasUsableSimplification confirms there's actually something to show.
+  // isSimplifying still flips true immediately (runSimplify sets it),
+  // which WordInfoPopover's button reads to show its own pending state
+  // -- the student sees SOMETHING happen on click even though the view
+  // itself doesn't change yet.
   const openSimplifyFocus = useCallback(() => {
-    setIsSimplifyFocusOpen(true);
-    simplifySentence();
-  }, [simplifySentence]);
+    if (!activeWord) return;
+    runSimplify(activeWord.sentenceText, (data) => {
+      if (hasUsableSimplification(data)) setIsSimplifyFocusOpen(true);
+      // else: stays on WordInfoPopover, nothing else to do -- simplifyError
+      // (network failure) or simplifiedSentence.needs_simplification===false
+      // (already at/below grade level) both just mean "no translation,"
+      // and simplifySentence/simplifiedSentence state is still set for
+      // anything that wants to read it later.
+    });
+  }, [activeWord, runSimplify]);
 
   // Entry point for the reading pane's own hover-triggered "SIMPLIFY
   // SENTENCE" chip (see ReadingPane.tsx's per-word wrapper, mirroring the
-  // existing JUMP HERE chip, just anchored above the word instead of
-  // below) -- opens the focus view straight from a hover, skipping the
-  // ordinary tap-to-define card (WordInfoPopover.tsx) entirely.
-  // ReadingScreen.tsx renders SimplifySentenceFocus whenever activeWord
-  // && isSimplifyFocusOpen are both true, regardless of which path set
-  // them, so setting both here is enough. Mirrors tapWord's own "new
-  // word" branch for activeWord/stage/simplify-state resets (wordInfo/
-  // error/isLoading too, since fetchWordInfo -- which would normally
-  // reset those -- is deliberately never called on this path; there's no
-  // tap-to-define card to show that data in), then calls runSimplify
-  // directly with the sentence text already in hand rather than through
-  // simplifySentence (which would read activeWord state back before
-  // React has actually applied the setActiveWord call just below).
+  // existing JUMP HERE chip, just anchored below the word instead of
+  // above). Same "don't leave the original view for nothing" rule as
+  // openSimplifyFocus above, just more so here -- this path skips the
+  // tap-to-define card entirely, so activeWord is deliberately NOT set
+  // until the fetch resolves as usable either. Setting it early (like the
+  // old version did) would make ReadingScreen.tsx's `activeWord &&
+  // !isSimplifyFocusOpen` condition flash the ORDINARY WordInfoPopover
+  // card during the pending fetch -- a card this entry point was never
+  // supposed to show at all. Deferring both setActiveWord and
+  // setIsSimplifyFocusOpen to the same onResolved callback keeps the
+  // reading pane exactly as it was, the whole time, until (and unless)
+  // there's really something to show.
   const openSimplifyFocusForWord = useCallback(
     (paragraphIdx: number, wordIdx: number, sentenceIdx: number, wordText: string, sentenceText: string) => {
       requestIdRef.current += 1;
-      setActiveWord({ paragraphIdx, wordIdx, sentenceIdx, word: wordText, sentenceText });
+      const requestId = requestIdRef.current;
       setStageIndex(0);
       setWordInfo(null);
       setIsLoading(false);
       setError(null);
       setExampleError(null);
+      setIsDefinitionConfirmed(false);
       setSimplifiedSentence(null);
       setSimplifyError(null);
       setIsSimplifying(false);
-      setIsSimplifyFocusOpen(true);
-      runSimplify(sentenceText);
+      runSimplify(sentenceText, (data) => {
+        if (requestIdRef.current !== requestId) return; // student moved on already
+        if (hasUsableSimplification(data)) {
+          setActiveWord({ paragraphIdx, wordIdx, sentenceIdx, word: wordText, sentenceText });
+          setIsSimplifyFocusOpen(true);
+        }
+        // else: never leaves the reading pane -- no card, no focus view.
+      });
     },
     [runSimplify]
   );
@@ -555,6 +648,7 @@ export function useTapWord(gradeLevel: number = 9) {
     isLoading,
     error,
     exampleError,
+    isDefinitionConfirmed,
     tapWord,
     advanceStage,
     retreatStage,

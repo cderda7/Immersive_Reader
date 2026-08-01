@@ -126,11 +126,13 @@ export function ReadingScreen() {
             isLoading={tapWord.isLoading}
             error={tapWord.error}
             exampleError={tapWord.exampleError}
+            isDefinitionConfirmed={tapWord.isDefinitionConfirmed}
             onClose={tapWord.closeWord}
             onAdvance={tapWord.advanceStage}
             onRetreat={tapWord.retreatStage}
             onReplayAudio={tapWord.replayAudio}
             onOpenSimplifyFocus={tapWord.openSimplifyFocus}
+            isSimplifying={tapWord.isSimplifying}
             heldKeysRef={heldKeysRef}
           />
         )}
